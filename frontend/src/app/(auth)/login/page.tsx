@@ -8,6 +8,8 @@ import { z } from "zod";
 import { motion } from "motion/react";
 import { Bot, LockKeyhole, ShieldAlert, ShieldCheck, UserCheck } from "lucide-react";
 import { useDispatch } from "react-redux";
+import { api } from "@/lib/api";
+import { useState } from "react";
 import { Button, Input } from "@/components/ui";
 import { setSession, type AppDispatch, type UserRole } from "@/lib/store";
 
@@ -17,10 +19,17 @@ const schema = z.object({
 });
 type FormValues = z.infer<typeof schema>;
 
+function routeForRoles(roles: unknown[]) {
+  if (roles.includes("SUPER_ADMIN")) return { role: "super-admin" as const, route: "/super-admin" };
+  if (roles.includes("ADMIN")) return { role: "admin" as const, route: "/admin" };
+  return { role: "funcionario" as const, route: "/funcionario/chat" };
+}
+
 const demoProfiles: {
   role: UserRole;
   name: string;
   email: string;
+  password: string;
   badge: string;
   route: string;
   description: string;
@@ -30,6 +39,7 @@ const demoProfiles: {
     role: "super-admin",
     name: "Marina Costa",
     email: "marina.costa@exemplo.com",
+    password: "Demo-Super-2026!",
     badge: "Super-admin",
     route: "/super-admin",
     description: "Acesso total: arquivos, logs, relatórios e usuários.",
@@ -39,6 +49,7 @@ const demoProfiles: {
     role: "admin",
     name: "Ricardo Mendes",
     email: "ricardo.mendes@exemplo.com",
+    password: "Demo-Admin-2026!",
     badge: "Admin",
     route: "/admin",
     description: "Gestão operacional e edição de usuários com justificativa.",
@@ -48,6 +59,7 @@ const demoProfiles: {
     role: "funcionario",
     name: "Lucas Almeida",
     email: "lucas.almeida@exemplo.com",
+    password: "Demo-Employee-2026!",
     badge: "Funcionário",
     route: "/funcionario/chat",
     description: "Acesso restrito exclusivamente ao chat interno.",
@@ -58,6 +70,7 @@ const demoProfiles: {
 export default function LoginPage() {
   const router = useRouter();
   const dispatch = useDispatch<AppDispatch>();
+  const [authError, setAuthError] = useState("");
 
   const {
     register,
@@ -67,50 +80,22 @@ export default function LoginPage() {
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
-      email: "marina.costa@exemplo.com",
-      password: "••••••••••••",
+      email: "",
+      password: "",
     },
   });
 
-  function selectProfile(profile: (typeof demoProfiles)[0]) {
-    setValue("email", profile.email);
-    setValue("password", "••••••••••••");
-    dispatch(
-      setSession({
-        email: profile.email,
-        name: profile.name,
-        role: profile.role,
-      })
-    );
-    router.push(profile.route);
-  }
-
   async function onSubmit(values: FormValues) {
-    const emailLower = values.email.toLowerCase();
-    let targetRole: UserRole = "admin";
-    let targetRoute = "/admin";
-
-    if (emailLower.includes("super") || emailLower.includes("marina")) {
-      targetRole = "super-admin";
-      targetRoute = "/super-admin";
-    } else if (
-      emailLower.includes("func") ||
-      emailLower.includes("lucas") ||
-      emailLower.includes("colab")
-    ) {
-      targetRole = "funcionario";
-      targetRoute = "/funcionario/chat";
+    setAuthError("");
+    try {
+      const response = await api.post<{ accessToken: string; email: string; name: string; roles: string[] }>("/auth/login", values);
+      sessionStorage.setItem("omnichanel-access-token", response.data.accessToken);
+      const access = routeForRoles(response.data.roles);
+      dispatch(setSession({ email: response.data.email, name: response.data.name, role: access.role, accessToken: response.data.accessToken }));
+      router.push(access.route);
+    } catch {
+      setAuthError("Credenciais inválidas ou serviço de autenticação indisponível.");
     }
-
-    dispatch(
-      setSession({
-        email: values.email,
-        name: values.email.split("@")[0].replace(".", " "),
-        role: targetRole,
-      })
-    );
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    router.push(targetRoute);
   }
 
   return (
@@ -144,7 +129,7 @@ export default function LoginPage() {
               <button
                 key={profile.role}
                 type="button"
-                onClick={() => selectProfile(profile)}
+                onClick={() => { setValue("email", profile.email); setValue("password", profile.password); setAuthError(""); }}
                 className="flex items-start gap-3 rounded-xl border border-border bg-white p-3 text-left shadow-sm hover:border-neutral-400 hover:bg-stone-50/60 active:scale-[0.99] transition-all"
               >
                 <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-800">
@@ -172,6 +157,7 @@ export default function LoginPage() {
           onSubmit={handleSubmit(onSubmit)}
           className="space-y-4 rounded-2xl border border-border bg-white p-6 shadow-[0_12px_40px_rgba(0,0,0,.035)]"
         >
+          <p className="text-xs text-muted-foreground">Entre com uma conta cadastrada no serviço.</p>
           <div>
             <label htmlFor="email" className="mb-1.5 block text-xs font-medium">
               Email
@@ -212,8 +198,9 @@ export default function LoginPage() {
             )}
           </div>
 
+          {authError && <p role="alert" className="text-xs text-red-600">{authError}</p>}
           <Button type="submit" className="w-full" disabled={isSubmitting}>
-            {isSubmitting ? "Entrando..." : "Entrar com credenciais"}
+            {isSubmitting ? "Conectando..." : "Entrar com credenciais"}
             <span aria-hidden="true">→</span>
           </Button>
         </form>

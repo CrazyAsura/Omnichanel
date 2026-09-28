@@ -42,8 +42,7 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          issuer-uri: ${JWT_ISSUER_URI}
-          jwk-set-uri: ${JWT_JWK_SET_URI}
+          issuer-uri: ${JWT_ISSUER_URI:omnichannel-local}
 app:
   cors:
     allowed-origin: ${FRONTEND_ORIGIN}
@@ -51,6 +50,8 @@ app:
     audit-retention-days: ${SECURITY_AUDIT_RETENTION_DAYS:365}
     jwt:
       audience: ${JWT_AUDIENCE}
+      secret: ${JWT_SECRET}
+    seed-users: ${SEED_USERS}
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
@@ -62,7 +63,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,metrics
+        include: health,info
   endpoint:
     health:
       probes:

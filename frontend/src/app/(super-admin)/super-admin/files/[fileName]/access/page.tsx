@@ -6,5 +6,11 @@ export default async function SuperAdminFileAccessRoute({
   params: Promise<{ fileName: string }>;
 }) {
   const { fileName } = await params;
-  return <FileAccessPage fileName={fileName} />;
+  let decoded = fileName;
+  try {
+    decoded = decodeURIComponent(fileName);
+  } catch {
+    decoded = fileName;
+  }
+  return <FileAccessPage fileName={decoded} />;
 }

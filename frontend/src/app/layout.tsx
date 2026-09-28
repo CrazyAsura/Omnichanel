@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   description: "Painel neutro de administração e operações",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html
       lang="pt-BR"

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowDownToLine,
@@ -23,60 +23,44 @@ import {
   Trash2,
 } from "lucide-react";
 import { Button, Card, PageHeading, Pagination, SearchField, Skeleton } from "@/components/ui";
-import { mockApi } from "@/lib/api";
+import { mockApi, createDocumentApi, updateDocumentAccessApi, deleteDocumentApi } from "@/lib/api";
 import { downloadCsv } from "@/lib/download";
 
-const accessStorageKey = "omnichanel-file-access";
-const deletedStorageKey = "omnichanel-deleted-files";
-const uploadedStorageKey = "omnichanel-uploaded-files";
-const deletionLogStorageKey = "omnichanel-file-deletion-log";
 
 type AccessLevel = "all" | "admin" | "super-admin";
-type ManagedFile = { name: string; owner: string; size: string; updated: string; type: string };
+type ManagedFile = { id?: string; name: string; owner: string; size: string; updated: string; type: string; accessLevel?: string };
 
 function fileHref(fileName: string, base = "/super-admin/files") {
   return `${base}/${encodeURIComponent(fileName)}`;
 }
 
-function loadDeletedFiles(): string[] {
+function findFileByName(files: ManagedFile[], targetName: string): ManagedFile | undefined {
+  if (!targetName) return undefined;
+  let decoded = targetName;
   try {
-    return JSON.parse(localStorage.getItem(deletedStorageKey) ?? "[]") as string[];
+    decoded = decodeURIComponent(targetName);
   } catch {
-    return [];
+    decoded = targetName;
   }
+
+  return files.find((item) => {
+    if (item.name === targetName || item.name === decoded) return true;
+    try {
+      if (decodeURIComponent(item.name) === decoded) return true;
+      if (item.name === decodeURIComponent(decoded)) return true;
+      if (encodeURIComponent(item.name) === targetName) return true;
+    } catch {
+      // ignora erros de decodificação de strings já decodificadas
+    }
+    if (item.name.normalize("NFC") === decoded.normalize("NFC")) return true;
+    if (item.name.normalize("NFD") === decoded.normalize("NFD")) return true;
+    return false;
+  });
 }
 
-function markFileDeleted(fileName: string) {
-  const deleted = new Set(loadDeletedFiles());
-  deleted.add(fileName);
-  localStorage.setItem(deletedStorageKey, JSON.stringify([...deleted]));
-}
-
-function loadUploadedFiles(): ManagedFile[] {
-  try {
-    return JSON.parse(localStorage.getItem(uploadedStorageKey) ?? "[]") as ManagedFile[];
-  } catch {
-    return [];
-  }
-}
 
 function useManagedFiles() {
-  const query = useQuery({ queryKey: ["files"], queryFn: mockApi.files });
-  const [uploadedFiles, setUploadedFiles] = useState<ManagedFile[]>([]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => setUploadedFiles(loadUploadedFiles()), 0);
-    return () => window.clearTimeout(timer);
-  }, []);
-
-  const originalFiles = query.data ?? [];
-  const uploadedNames = new Set(uploadedFiles.map((file) => file.name));
-  return {
-    ...query,
-    data: [...originalFiles.filter((file) => !uploadedNames.has(file.name)), ...uploadedFiles],
-    uploadedFiles,
-    setUploadedFiles,
-  };
+  return useQuery({ queryKey: ["files"], queryFn: mockApi.files });
 }
 
 function formatFileSize(bytes: number) {
@@ -89,56 +73,27 @@ function extensionType(fileName: string) {
   return extension === "DOCX" ? "DOC" : extension;
 }
 
-function recordFileDeletion(fileName: string, reason: string) {
-  markFileDeleted(fileName);
-  let log: { name: string; reason: string; deletedAt: string }[] = [];
-  try {
-    log = JSON.parse(localStorage.getItem(deletionLogStorageKey) ?? "[]") as typeof log;
-  } catch {
-    log = [];
-  }
-  localStorage.setItem(
-    deletionLogStorageKey,
-    JSON.stringify([{ name: fileName, reason, deletedAt: new Date().toISOString() }, ...log])
-  );
-}
-
-function accessLabel(level: AccessLevel) {
-  return level === "all"
-    ? "Sem restrição de cargo"
-    : level === "admin"
-    ? "Admin e Super-admin"
-    : "Somente Super-admin";
-}
-
-function loadAccess(fileName: string): AccessLevel {
-  try {
-    const values = JSON.parse(localStorage.getItem(accessStorageKey) ?? "{}") as Record<string, AccessLevel>;
-    return values[fileName] ?? "all";
-  } catch {
-    return "all";
+function accessLabel(level: string | undefined) {
+  switch (level) {
+    case "admin":
+      return "Somente administradores e super-administradores podem consultar este documento.";
+    case "super-admin":
+      return "Somente super-administradores podem consultar este documento.";
+    default:
+      return "Todos os usuários autenticados podem consultar este documento.";
   }
 }
 
-function saveAccess(fileName: string, level: AccessLevel) {
-  let values: Record<string, AccessLevel> = {};
-  try {
-    values = JSON.parse(localStorage.getItem(accessStorageKey) ?? "{}") as Record<string, AccessLevel>;
-  } catch {
-    values = {};
-  }
-  localStorage.setItem(accessStorageKey, JSON.stringify({ ...values, [fileName]: level }));
-}
 
 export function FilesPage() {
   const pathname = usePathname();
   const basePath = pathname.startsWith("/admin") ? "/admin/files" : "/super-admin/files";
-  const { data = [], isLoading, uploadedFiles, setUploadedFiles } = useManagedFiles();
+  const queryClient = useQueryClient();
+  const { data = [], isLoading } = useManagedFiles();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [fileType, setFileType] = useState("Todos os tipos");
   const [menuTarget, setMenuTarget] = useState<{ file: ManagedFile; top: number; left: number } | null>(null);
-  const [deletedFiles, setDeletedFiles] = useState<string[]>([]);
   const [notice, setNotice] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<ManagedFile | null>(null);
   const [deleteReason, setDeleteReason] = useState("");
@@ -146,8 +101,6 @@ export function FilesPage() {
 
   useEffect(() => {
     setMounted(true);
-    const timer = window.setTimeout(() => setDeletedFiles(loadDeletedFiles()), 0);
-    return () => window.clearTimeout(timer);
   }, []);
 
   // Listeners to close portal dropdown without causing any table scroll
@@ -179,7 +132,6 @@ export function FilesPage() {
 
   const visible = data.filter(
     (file) =>
-      !deletedFiles.includes(file.name) &&
       `${file.name} ${file.owner}`.toLowerCase().includes(query.toLowerCase()) &&
       (fileType === "Todos os tipos" || file.type === fileType)
   );
@@ -207,34 +159,36 @@ export function FilesPage() {
     setMenuTarget({ file, top, left });
   }
 
-  function deleteFile(file: ManagedFile) {
+  async function deleteFile(file: ManagedFile) {
     if (!deleteReason.trim()) return;
-    recordFileDeletion(file.name, deleteReason.trim());
-    setDeletedFiles((current) => [...current, file.name]);
-    setMenuTarget(null);
-    setDeleteTarget(null);
-    setDeleteReason("");
-    setNotice(`${file.name} foi excluído. Justificativa registrada.`);
+    try {
+      await deleteDocumentApi(file.name, deleteReason.trim());
+      await queryClient.invalidateQueries({ queryKey: ["files"] });
+      setMenuTarget(null);
+      setDeleteTarget(null);
+      setDeleteReason("");
+      setNotice(`${file.name} foi excluído e registrado no SQL Server.`);
+    } catch {
+      setNotice("Falha ao excluir o documento no SQL Server.");
+    }
   }
 
-  function addFiles(selected: FileList | null) {
+  async function addFiles(selected: FileList | null) {
     if (!selected?.length) return;
-    const additions = Array.from(selected).map(
-      (file): ManagedFile => ({
-        name: file.name,
-        owner: "Marina Costa",
-        size: formatFileSize(file.size),
-        updated: "Agora",
-        type: extensionType(file.name),
-      })
-    );
-    const merged = [
-      ...uploadedFiles.filter((current) => !additions.some((added) => added.name === current.name)),
-      ...additions,
-    ];
-    localStorage.setItem(uploadedStorageKey, JSON.stringify(merged));
-    setUploadedFiles(merged);
-    setNotice(`${additions.length} arquivo(s) adicionado(s) à demonstração.`);
+    try {
+      for (const file of Array.from(selected)) {
+        await createDocumentApi({
+          name: file.name,
+          owner: "Marina Costa",
+          size: formatFileSize(file.size),
+          type: extensionType(file.name),
+        });
+      }
+      await queryClient.invalidateQueries({ queryKey: ["files"] });
+      setNotice(`${selected.length} arquivo(s) salvos no SQL Server.`);
+    } catch {
+      setNotice("Falha ao salvar arquivo(s) no SQL Server.");
+    }
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -622,14 +576,8 @@ export function FileDetailsPage({ fileName }: { fileName: string }) {
   const pathname = usePathname();
   const basePath = pathname.startsWith("/admin") ? "/admin/files" : "/super-admin/files";
   const { data = [], isLoading } = useManagedFiles();
-  const file = data.find((item) => item.name === fileName);
-  const [access, setAccess] = useState<AccessLevel>("all");
-
-  useEffect(() => {
-    if (!file) return;
-    const timer = window.setTimeout(() => setAccess(loadAccess(file.name)), 0);
-    return () => window.clearTimeout(timer);
-  }, [file]);
+  const file = findFileByName(data, fileName);
+  const access = ((file as any)?.accessLevel as AccessLevel) || "all";
 
   if (isLoading) {
     return (
@@ -775,62 +723,41 @@ export function FileAccessPage({ fileName }: { fileName: string }) {
   const router = useRouter();
   const pathname = usePathname();
   const basePath = pathname.startsWith("/admin") ? "/admin/files" : "/super-admin/files";
+  const queryClient = useQueryClient();
   const { data = [], isLoading } = useManagedFiles();
-  const file = data.find((item) => item.name === fileName);
+  const file = findFileByName(data, fileName);
   const [level, setLevel] = useState<AccessLevel>("all");
   const [saved, setSaved] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteReason, setDeleteReason] = useState("");
 
   useEffect(() => {
-    if (!file) return;
-    const timer = window.setTimeout(() => setLevel(loadAccess(file.name)), 0);
-    return () => window.clearTimeout(timer);
+    if (file && (file as any).accessLevel) {
+      setLevel((file as any).accessLevel as AccessLevel);
+    }
   }, [file]);
 
-  if (isLoading) {
-    return (
-      <div className="mx-auto max-w-3xl space-y-6">
-        <Skeleton className="h-4 w-32" />
-        <Skeleton className="h-8 w-48" />
-        <Card className="p-6 space-y-4">
-          <Skeleton className="h-5 w-40" />
-          <Skeleton className="h-16 w-full rounded-xl" />
-          <Skeleton className="h-16 w-full rounded-xl" />
-          <Skeleton className="h-16 w-full rounded-xl" />
-        </Card>
-      </div>
-    );
-  }
-
-  if (!file) {
-    return (
-      <motion.div
-        initial={{ opacity: 0, scale: 0.98 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ type: "spring", stiffness: 400, damping: 30 }}
-      >
-        <Card className="mx-auto mt-12 max-w-xl p-8 text-center">
-          <h1 className="text-lg font-semibold">Documento não encontrado</h1>
-          <Button variant="outline" className="mt-5" onClick={() => router.push(basePath)}>
-            <ArrowLeft size={15} />
-            Voltar aos arquivos
-          </Button>
-        </Card>
-      </motion.div>
-    );
-  }
-
-  function savePermissions(event: FormEvent<HTMLFormElement>) {
+  async function savePermissions(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    saveAccess(file!.name, level);
-    setSaved(true);
+    if (!file) return;
+    try {
+      await updateDocumentAccessApi(file.name, level);
+      await queryClient.invalidateQueries({ queryKey: ["files"] });
+      setSaved(true);
+    } catch {
+      // erro tratado
+    }
   }
 
-  function deleteDocument() {
-    if (!deleteReason.trim()) return;
-    recordFileDeletion(file!.name, deleteReason.trim());
-    router.push(basePath);
+  async function deleteDocument() {
+    if (!deleteReason.trim() || !file) return;
+    try {
+      await deleteDocumentApi(file.name, deleteReason.trim());
+      await queryClient.invalidateQueries({ queryKey: ["files"] });
+      router.push(basePath);
+    } catch {
+      // erro tratado
+    }
   }
 
   const options: { value: AccessLevel; title: string; description: string }[] = [
@@ -850,6 +777,29 @@ export function FileAccessPage({ fileName }: { fileName: string }) {
       description: "Somente pessoas com cargo de Super-admin podem consultar.",
     },
   ];
+
+  if (isLoading) {
+    return (
+      <div className="mx-auto max-w-3xl space-y-5">
+        <Skeleton className="h-4 w-40" />
+        <Skeleton className="h-10 w-64" />
+        <Skeleton className="h-64 w-full rounded-xl" />
+      </div>
+    );
+  }
+
+  if (!file) {
+    return (
+      <Card className="mx-auto mt-12 max-w-xl p-8 text-center">
+        <h1 className="text-lg font-semibold">Documento não encontrado</h1>
+        <p className="mt-2 text-sm text-muted-foreground">Este arquivo não existe nos dados disponíveis.</p>
+        <Button variant="outline" className="mt-5" onClick={() => router.push(basePath)}>
+          <ArrowLeft size={15} />
+          Voltar aos arquivos
+        </Button>
+      </Card>
+    );
+  }
 
   return (
     <motion.div

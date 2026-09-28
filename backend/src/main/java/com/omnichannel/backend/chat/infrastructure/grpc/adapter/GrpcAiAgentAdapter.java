@@ -42,9 +42,9 @@ public class GrpcAiAgentAdapter implements AiAgentRpcPort {
                 .build();
 
         try {
-            // Configura timeout de 120 segundos para geração multimodal
+            // Permite que o modelo local conclua inferências lentas ou a primeira carga.
             AgentChatResponse response = agentStub
-                    .withDeadlineAfter(120, TimeUnit.SECONDS)
+                    .withDeadlineAfter(300, TimeUnit.SECONDS)
                     .chat(request);
 
             GeneratedFileOutput generatedFile = null;

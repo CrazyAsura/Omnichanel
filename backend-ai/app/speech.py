@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 router = APIRouter()
 _lock = threading.Lock()
 _pipeline = None
+_pipeline_lock = threading.Lock()
 
 
 class SpeechRequest(BaseModel):
@@ -26,10 +27,10 @@ def spoken_text(text: str) -> str:
 def synthesize(text: str) -> bytes:
     global _pipeline
     import numpy as np
-    from kokoro import KPipeline
-
-    if _pipeline is None:
-        _pipeline = KPipeline(lang_code="p", device="cpu", repo_id="hexgrad/Kokoro-82M")
+    with _pipeline_lock:
+        if _pipeline is None:
+            from kokoro import KPipeline
+            _pipeline = KPipeline(lang_code="p", device="cpu", repo_id="hexgrad/Kokoro-82M")
     output = io.BytesIO()
     with wave.open(output, "wb") as wav:
         wav.setnchannels(1)
@@ -47,17 +48,33 @@ def synthesize(text: str) -> bytes:
     return output.getvalue()
 
 
+def warmup() -> None:
+    global _pipeline
+    with _pipeline_lock:
+        if _pipeline is None:
+            try:
+                from kokoro import KPipeline
+                _pipeline = KPipeline(lang_code="p", device="cpu", repo_id="hexgrad/Kokoro-82M")
+                import logging
+                logging.getLogger("omnichannel-ai.speech").info("Kokoro TTS aquecido e pronto para uso.")
+            except Exception as e:
+                import logging
+                logging.getLogger("omnichannel-ai.speech").warning("Falha ao pré-carregar Kokoro TTS: %s", e)
+
+
 @router.post("/api/speech", tags=["Speech"])
 def speech(request: SpeechRequest):
-    text = spoken_text(request.text)
+    text = spoken_text(request.text) or request.text.strip()
     if not text:
         raise HTTPException(422, "Texto sem conteúdo para leitura")
     if not _lock.acquire(blocking=False):
         raise HTTPException(429, "Voz ocupada. Tente novamente.", headers={"Retry-After": "5"})
     try:
         return Response(synthesize(text), media_type="audio/wav", headers={"Cache-Control": "no-store"})
-    except Exception:
+    except Exception as exc:
         # Never expose model exceptions: they can contain the input text.
+        import logging
+        logging.getLogger("omnichannel-ai.speech").exception("Falha interna na síntese de voz (%s)", type(exc).__name__)
         raise HTTPException(503, "Síntese de voz indisponível") from None
     finally:
         _lock.release()

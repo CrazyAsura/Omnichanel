@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from threading import Lock
 
 from app.config import settings
-from app.speech import router as speech_router
+from app.speech import router as speech_router, warmup as speech_warmup
 from app.grpc_service import pb2_grpc
 from app.grpc_service.agent_servicer import AgentServiceServicer
 from app.agents.agent_orchestrator import AgentOrchestrator
@@ -59,6 +59,8 @@ async def lifespan(app: FastAPI):
     logger.info("Iniciando AgentScope Orchestrator e ChromaDB...")
     await orchestrator.initialize()
     await orchestrator.rag.index_documents()
+    import threading
+    threading.Thread(target=speech_warmup, daemon=True, name="TTS-Warmup").start()
 
     # Inicia o servidor gRPC na porta configurada (padrão 50051)
     logger.info(f"Iniciando gRPC server na porta {settings.GRPC_PORT}...")

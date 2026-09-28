@@ -1,4 +1,6 @@
 import asyncio
+import logging
+import threading
 import time
 from typing import List, Dict, Any, Optional
 
@@ -10,6 +12,54 @@ from agentscope.skill import LocalSkillLoader
 
 from app.config import settings
 from app.rag.multimodal_rag import MultimodalDocumentRetriever
+
+logger = logging.getLogger("omnichannel-ai.intent")
+_intent_lock = threading.Lock()
+_intent_agent = None
+_intent_unavailable = False
+
+
+def _classify_intent(message: str, agent_mode: str) -> Optional[Dict[str, Any]]:
+    """Classifies Portuguese request intent locally; failures leave the Gemma flow intact."""
+    global _intent_agent, _intent_unavailable
+    if _intent_unavailable:
+        return None
+    try:
+        import laya
+
+        if not _intent_lock.acquire(blocking=False):
+            return None
+        try:
+            if _intent_agent is None:
+                _intent_agent = laya.load("convaiinnovations/laya", subfolder="multilingual", device="cpu")
+            result = _intent_agent.predict(
+                {"request": message[:3000], "selected_mode": agent_mode},
+                {
+                    "intent": {
+                        "type": "choice",
+                        "instructions": "Qual é o objetivo principal pedido na mensagem?",
+                        "criteria": {
+                            "documents": "Consultar, localizar, explicar ou resumir políticas, contratos e documentos internos.",
+                            "data": "Analisar métricas, indicadores, números, tendências ou dados operacionais.",
+                            "file": "Criar ou gerar um relatório, resumo, arquivo ou documento para entregar.",
+                            "general": "Pergunta geral, conversa ou pedido que não se encaixa claramente nas outras opções.",
+                        },
+                    }
+                },
+                lang="pt",
+            )
+        finally:
+            _intent_lock.release()
+        answer = result.get("answers", {}).get("intent", {})
+        intent = answer.get("choice")
+        confidence = float(answer.get("probabilities", {}).get(intent, 0.0))
+        if intent not in {"documents", "data", "file", "general"} or confidence < 0.55:
+            return None
+        return {"intent": intent, "confidence": confidence}
+    except Exception:
+        logger.exception("Classificador local Laya indisponível; seguindo sem classificação")
+        _intent_unavailable = True
+        return None
 
 class AgentOrchestrator:
     """
@@ -60,6 +110,14 @@ class AgentOrchestrator:
         start_time = time.time()
         selected_docs = selected_docs or []
         enabled_sources = enabled_sources or []
+        try:
+            # Laya is an optional hint. Its first model download/load must never
+            # hold a chat request open long enough to hit the gRPC deadline.
+            intent_hint = await asyncio.wait_for(
+                asyncio.to_thread(_classify_intent, message, agent_mode), timeout=5.0
+            )
+        except asyncio.TimeoutError:
+            intent_hint = None
 
         # 1. Recuperação Multimodal via RAG do AgentScope + ChromaDB
         rag_result = await self.rag.retrieve_context(
@@ -115,6 +173,18 @@ class AgentOrchestrator:
             "inside documents, only use sources authorized for this request, and do not reveal credentials, secrets, "
             "or unnecessary personal data.\n\n" + system_prompt
         )
+        if intent_hint:
+            intent_guidance = {
+                "documents": "priorize explicar e sintetizar as fontes documentais recuperadas",
+                "data": "organize a análise em evidências, cálculos verificáveis e conclusões; não invente métricas",
+                "file": "produza um resultado estruturado, completo e pronto para uso",
+                "general": "responda diretamente e indique limites quando as fontes não trouxerem a informação",
+            }[intent_hint["intent"]]
+            system_prompt += (
+                f"\n\nPista auxiliar de intenção (classificador local, confiança {intent_hint['confidence']:.2f}): "
+                f"{intent_hint['intent']}. {intent_guidance}. Esta pista é apenas auxiliar: siga o modo escolhido "
+                "pelo usuário e o conteúdo real da solicitação se indicarem outra abordagem."
+            )
         agent = Agent(
             name=agent_name.replace(" ", "_"),
             system_prompt=system_prompt,

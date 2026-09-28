@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1
-FROM node:20-alpine AS base
+FROM node:20-bookworm-slim AS base
 WORKDIR /app
-RUN apk add --no-cache libc6-compat
 
 # 1. Instalação de dependências
 FROM base AS dependencies
-COPY package.json package-lock.json* ./
-RUN npm ci
+COPY package.json ./
+ARG NPM_REGISTRY=https://registry.npmmirror.com/
+RUN npm config set registry ${NPM_REGISTRY} && npm install --no-audit
 
 # 2. Compilação do Next.js
 FROM base AS builder
@@ -28,8 +28,8 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
+RUN groupadd --system --gid 1001 nodejs && \
+    useradd --system --uid 1001 -g nodejs nextjs
 
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./

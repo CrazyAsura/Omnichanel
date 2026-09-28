@@ -1,3 +1,5 @@
+name: backend
+
 services:
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-latest
@@ -60,8 +62,7 @@ services:
     build:
       context: ../backend-ai
       dockerfile: Dockerfile
-    image: backend-ai-backend-ai:latest
-    container_name: omnichannel-backend-ai
+    image: omnichannel-backend-ai:latest
     environment:
       HTTP_PORT: 8000
       GRPC_PORT: 50051
@@ -81,20 +82,8 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
       interval: 10s
       timeout: 5s
-      retries: 10
-      start_period: 20s
-    networks:
-      - omnichannel-network
-
-  kibana:
-    image: docker.elastic.co/kibana/kibana:8.19.22
-    container_name: omnichannel-kibana
-    environment:
-      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
-    ports: ["127.0.0.1:5601:5601"]
-    depends_on:
-      elasticsearch:
-        condition: service_healthy
+      retries: 15
+      start_period: 60s
     networks:
       - omnichannel-network
 
@@ -137,9 +126,10 @@ services:
       DB_MIGRATION_USERNAME: ${DB_MIGRATION_USERNAME:?Set DB_MIGRATION_USERNAME in .env}
       DB_MIGRATION_PASSWORD: ${DB_MIGRATION_PASSWORD:?Set DB_MIGRATION_PASSWORD in .env}
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:?Set AI_SERVICE_TOKEN in .env}
-      JWT_ISSUER_URI: ${JWT_ISSUER_URI:?Set JWT_ISSUER_URI in backend/.env}
-      JWT_JWK_SET_URI: ${JWT_JWK_SET_URI:?Set JWT_JWK_SET_URI in backend/.env}
+      JWT_ISSUER_URI: ${JWT_ISSUER_URI:-omnichannel-local}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in backend/.env}
       JWT_AUDIENCE: ${JWT_AUDIENCE:?Set JWT_AUDIENCE in backend/.env}
+      SEED_USERS: ${SEED_USERS:?Set SEED_USERS in backend/.env}
       SECURITY_AUDIT_RETENTION_DAYS: ${SECURITY_AUDIT_RETENTION_DAYS:?Set SECURITY_AUDIT_RETENTION_DAYS in backend/.env}
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       RABBITMQ_HOST: rabbitmq
@@ -171,40 +161,15 @@ services:
     networks:
       - omnichannel-network
 
-  prometheus:
-    image: prom/prometheus:v3.5.0
-    container_name: omnichannel-prometheus
-    ports: ["127.0.0.1:9091:9090"]
-    volumes:
-      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    depends_on: [app, backend-ai]
-    networks:
-      - omnichannel-network
-
-  grafana:
-    image: grafana/grafana:12.1.1
-    container_name: omnichannel-grafana
-    ports: ["127.0.0.1:3001:3000"]
-    environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?Set GRAFANA_PASSWORD in .env}
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./observability/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
-    depends_on: [prometheus]
-    networks:
-      - omnichannel-network
-
 networks:
   omnichannel-network:
-    name: ${DOCKER_NETWORK:?Set DOCKER_NETWORK in backend/.env}
+    name: ${DOCKER_NETWORK:-omnichannel-network}
     external: true
 
 volumes:
   sqlserver_data:
   kafka_data:
   elasticsearch_data:
-  grafana_data:
   rabbitmq_data:
   redis_data:
   chroma_data:

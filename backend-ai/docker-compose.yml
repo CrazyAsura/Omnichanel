@@ -1,9 +1,11 @@
+name: omnichannel-backend-ai
+
 services:
   backend-ai:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: omnichannel-backend-ai
+    image: omnichannel-backend-ai:latest
     restart: unless-stopped
     expose:
       - "8000"
@@ -29,5 +31,5 @@ services:
 
 networks:
   omnichannel-network:
-    name: ${DOCKER_NETWORK:?Set DOCKER_NETWORK in backend-ai/.env}
+    name: ${DOCKER_NETWORK:-omnichannel-network}
     external: true

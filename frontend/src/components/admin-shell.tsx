@@ -160,6 +160,7 @@ export function AdminShell({
   };
 
   function logout() {
+    sessionStorage.removeItem("omnichanel-access-token");
     dispatch(signOut());
     router.push("/login");
   }

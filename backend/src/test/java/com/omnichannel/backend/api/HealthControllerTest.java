@@ -15,7 +15,7 @@ import com.omnichannel.backend.security.SecurityAuditService;
 
 @WebMvcTest(value = HealthController.class, properties = {
         "JWT_ISSUER_URI=https://issuer.example.test",
-        "JWT_JWK_SET_URI=https://issuer.example.test/jwks",
+        "JWT_SECRET=01234567890123456789012345678901",
         "JWT_AUDIENCE=omnichannel-api"
 })
 @Import(SecurityConfiguration.class)

@@ -7,13 +7,15 @@ interface SessionState {
   name: string;
   role: UserRole;
   authenticated: boolean;
+  accessToken: string | null;
 }
 
 const initialState: SessionState = {
-  email: "marina.costa@exemplo.com",
-  name: "Marina Costa",
-  role: "super-admin",
-  authenticated: true,
+  email: "",
+  name: "",
+  role: "funcionario",
+  authenticated: false,
+  accessToken: null,
 };
 
 const sessionSlice = createSlice({
@@ -28,15 +30,17 @@ const sessionSlice = createSlice({
     },
     setSession(
       state,
-      action: PayloadAction<{ email: string; name?: string; role: UserRole }>
+      action: PayloadAction<{ email: string; name?: string; role: UserRole; accessToken: string }>
     ) {
       state.email = action.payload.email;
       if (action.payload.name) state.name = action.payload.name;
       state.role = action.payload.role;
       state.authenticated = true;
+      state.accessToken = action.payload.accessToken;
     },
     signOut(state) {
       state.authenticated = false;
+      state.accessToken = null;
     },
   },
 });

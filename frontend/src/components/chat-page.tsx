@@ -11,7 +11,17 @@ import { sendChatMessage, synthesizeSpeech } from "@/lib/api";
 type Message = { id: number; role: "assistant" | "employee"; content: string; file?: { name: string; text: string }; time: string };
 type Thread = { id: string; title: string; messages: Message[]; updatedAt: number };
 type AgentMode = "Leitor de documentos internos" | "Analista de dados" | "Gerador de arquivos";
-type SpeechEvent = { resultIndex: number; results: ArrayLike<ArrayLike<{ transcript: string }>> };
+type SpeechEvent = {
+  resultIndex: number;
+  results: {
+    length: number;
+    [index: number]: {
+      isFinal?: boolean;
+      length: number;
+      [item: number]: { transcript: string };
+    };
+  };
+};
 type SpeechRecognitionLike = { lang: string; continuous: boolean; interimResults: boolean; onresult: ((event: SpeechEvent) => void) | null; onerror: (() => void) | null; onend: (() => void) | null; start: () => void; stop: () => void };
 type SpeechWindow = Window & { SpeechRecognition?: new () => SpeechRecognitionLike; webkitSpeechRecognition?: new () => SpeechRecognitionLike };
 
@@ -61,6 +71,9 @@ export function ChatPage() {
   const [speechLoading, setSpeechLoading] = useState(false);
 
   function stopSpeech() {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
     const current = speechRef.current;
     speechRef.current = null;
     current?.controller.abort();
@@ -190,7 +203,7 @@ export function ChatPage() {
     const pendingAssistantMessage: Message = {
       id: tempAssistantId,
       role: "assistant",
-      content: "Consultando agente especialista via gRPC...",
+      content: "",
       time: "Agora",
     };
 
@@ -236,7 +249,11 @@ export function ChatPage() {
         )
       );
     } catch (error: unknown) {
-      const errorMsg = error instanceof Error ? error.message : "Falha na comunicação com o backend";
+      const axiosErr = error as { response?: { data?: { detail?: string; message?: string } }; message?: string };
+      const errorMsg =
+        axiosErr.response?.data?.detail ||
+        axiosErr.response?.data?.message ||
+        (error instanceof Error ? error.message : "Falha na comunicação com o backend");
       const errorAssistantMessage: Message = {
         id: tempAssistantId,
         role: "assistant",
@@ -263,21 +280,60 @@ export function ChatPage() {
   }
 
   function startVoiceInput() {
-    if (voiceListening) { recognitionRef.current?.stop(); setVoiceListening(false); return; }
+    if (voiceListening) {
+      recognitionRef.current?.stop();
+      setVoiceListening(false);
+      return;
+    }
     const speech = window as SpeechWindow;
     const Recognition = speech.SpeechRecognition ?? speech.webkitSpeechRecognition;
-    if (!Recognition) { setNotice("O reconhecimento de voz não está disponível neste navegador."); return; }
+    if (!Recognition) {
+      setNotice("O reconhecimento de voz não está disponível neste navegador.");
+      return;
+    }
     const recognition = new Recognition();
     recognition.lang = "pt-BR";
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.onresult = (event) => { const transcript = event.results[event.resultIndex]?.[0]?.transcript; if (transcript) setPrompt((current) => `${current}${current ? " " : ""}${transcript}`); };
-    recognition.onerror = () => { setVoiceListening(false); setNotice("Não foi possível reconhecer o áudio. Tente novamente."); };
-    recognition.onend = () => setVoiceListening(false);
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    const basePrompt = prompt.trim();
+
+    recognition.onresult = (event) => {
+      let finalTranscript = "";
+      let interimTranscript = "";
+      for (let i = 0; i < event.results.length; i++) {
+        const item = event.results[i];
+        const text = item?.[0]?.transcript;
+        if (text) {
+          if (item.isFinal) {
+            finalTranscript += (finalTranscript ? " " : "") + text.trim();
+          } else {
+            interimTranscript += (interimTranscript ? " " : "") + text.trim();
+          }
+        }
+      }
+      const combined = [basePrompt, finalTranscript, interimTranscript]
+        .filter(Boolean)
+        .join(" ");
+      setPrompt(combined);
+    };
+
+    recognition.onerror = () => {
+      setVoiceListening(false);
+      setNotice("Não foi possível reconhecer o áudio. Tente novamente.");
+    };
+    recognition.onend = () => {
+      setVoiceListening(false);
+    };
+
     recognitionRef.current = recognition;
-    recognition.start();
-    setVoiceListening(true);
-    setNotice("Ouvindo… fale sua pergunta.");
+    try {
+      recognition.start();
+      setVoiceListening(true);
+      setNotice("Ouvindo... fale sua pergunta.");
+    } catch {
+      setVoiceListening(false);
+      setNotice("Não foi possível acessar o microfone.");
+    }
   }
 
   async function readAnswer(text: string) {
@@ -286,11 +342,12 @@ export function ChatPage() {
     setSpeechText(null);
     setSpeechLoading(false);
     if (stopping) { setNotice("Leitura interrompida."); return; }
+    const hasWebSpeech = typeof window !== "undefined" && "speechSynthesis" in window;
     const current: NonNullable<typeof speechRef.current> = { controller: new AbortController() };
     speechRef.current = current;
     setSpeechText(text);
     try {
-      // Keep individual synthesis requests bounded, preserving all response text.
+      // Tenta síntese neural de alta qualidade pelo backend
       const chunks: string[] = [];
       let remaining = text.trim();
       while (remaining) {
@@ -311,7 +368,7 @@ export function ChatPage() {
         current.url = URL.createObjectURL(blob);
         current.audio = new Audio(current.url);
         setSpeechLoading(false);
-        setNotice("Lendo a resposta. Clique novamente no botão de áudio para parar.");
+        setNotice("Lendo resposta com voz neural. Clique no botão de áudio para parar.");
         await new Promise<void>((resolve, reject) => {
           const onAbort = () => resolve();
           const finish = (error?: Error) => {
@@ -327,8 +384,49 @@ export function ChatPage() {
         current.url = undefined;
       }
       if (!current.controller.signal.aborted) setNotice("Leitura concluída.");
-    } catch {
-      if (!current.controller.signal.aborted) setNotice("Não foi possível reproduzir a voz. Verifique sua autenticação e a disponibilidade do serviço e tente novamente.");
+      return;
+    } catch (err: unknown) {
+      if (current.controller.signal.aborted) return;
+      console.warn("Voz neural do backend indisponível, acionando sintetizador nativo do navegador:", err);
+      if (hasWebSpeech) {
+        setSpeechLoading(false);
+        setNotice("Lendo resposta com voz do navegador. Clique para parar.");
+        try {
+          window.speechSynthesis.cancel();
+          const cleanText = text
+            .replace(/```[\s\S]*?```/g, " Trecho de código omitido. ")
+            .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+            .replace(/https?:\/\/\S+/g, "")
+            .replace(/[#*_`>|]/g, " ")
+            .trim();
+          const utterance = new SpeechSynthesisUtterance(cleanText);
+          utterance.lang = "pt-BR";
+          utterance.rate = 1.0;
+          await new Promise<void>((resolve) => {
+            const onAbort = () => {
+              window.speechSynthesis.cancel();
+              resolve();
+            };
+            current.controller.signal.addEventListener("abort", onAbort, { once: true });
+            utterance.onend = () => {
+              current.controller.signal.removeEventListener("abort", onAbort);
+              resolve();
+            };
+            utterance.onerror = () => {
+              current.controller.signal.removeEventListener("abort", onAbort);
+              resolve();
+            };
+            window.speechSynthesis.speak(utterance);
+          });
+          if (!current.controller.signal.aborted) setNotice("Leitura concluída.");
+          return;
+        } catch (synthErr) {
+          console.error("Erro na síntese nativa do navegador:", synthErr);
+        }
+      }
+      const axiosErr = err as { response?: { data?: { detail?: string; message?: string } }; message?: string };
+      const msg = axiosErr.response?.data?.detail || axiosErr.response?.data?.message || (err instanceof Error ? err.message : null);
+      setNotice(msg ? `Falha na voz: ${msg}` : "Não foi possível reproduzir a voz. Verifique sua conexão e tente novamente.");
     } finally {
       if (speechRef.current === current) {
         stopSpeech();
@@ -457,8 +555,23 @@ export function ChatPage() {
                 ))}
               </div>
             )}
-            <form onSubmit={sendMessage} className="rounded-3xl border border-border bg-white p-2.5 shadow-[0_4px_24px_rgba(0,0,0,0.06)] focus-within:border-stone-400 transition-all">
-              <textarea ref={textareaRef} value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={handleComposerKeyDown} rows={1} placeholder="Pergunte sobre documentos, processos ou sistemas internos..." className="max-h-48 min-h-[44px] w-full resize-none overflow-y-auto no-scrollbar bg-transparent px-3 py-2 text-sm leading-relaxed outline-none placeholder:text-stone-400"/>
+                        <form
+              onSubmit={sendMessage}
+              className={`rounded-3xl border bg-white p-2.5 shadow-[0_4px_24px_rgba(0,0,0,0.06)] transition-all ${
+                voiceListening
+                  ? "border-red-400 ring-2 ring-red-100/80 shadow-[0_4px_24px_rgba(239,68,68,0.12)]"
+                  : "border-border focus-within:border-stone-400"
+              }`}
+            >
+              <textarea
+                ref={textareaRef}
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                onKeyDown={handleComposerKeyDown}
+                rows={1}
+                placeholder={voiceListening ? "Ouvindo... fale agora..." : "Pergunte sobre documentos, processos ou sistemas internos..."}
+                className="max-h-48 min-h-[44px] w-full resize-none overflow-y-auto no-scrollbar bg-transparent px-3 py-2 text-sm leading-relaxed outline-none placeholder:text-stone-400"
+              />
               <div className="flex items-center justify-between gap-2 px-1 pb-0.5">
                 <button
                   type="button"
@@ -472,17 +585,80 @@ export function ChatPage() {
                   <Bot size={13} className="text-stone-500" />
                   <span className="truncate max-w-[180px] sm:max-w-none">{agentMode}</span>
                 </button>
-                <div className="flex items-center gap-1">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    aria-label={voiceListening ? "Parar gravação" : "Perguntar por voz"}
-                    title={voiceListening ? "Parar gravação" : "Perguntar por voz"}
-                    className={`h-8 w-8 p-0 ${voiceListening ? "bg-red-50 text-red-700" : ""}`}
-                    onClick={startVoiceInput}
-                  >
-                    {voiceListening ? <MicOff size={15} /> : <Mic size={15} />}
-                  </Button>
+                <div className="flex items-center gap-1.5">
+                  <AnimatePresence>
+                    {voiceListening && (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.85, x: 8 }}
+                        animate={{ opacity: 1, scale: 1, x: 0 }}
+                        exit={{ opacity: 0, scale: 0.85, x: 8 }}
+                        transition={{ duration: 0.2 }}
+                        className="flex items-center gap-2 rounded-full border border-red-200 bg-red-50/90 px-2.5 py-1 text-red-600 shadow-xs"
+                      >
+                        <span className="relative flex h-2 w-2">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
+                          <span className="relative inline-flex h-2 w-2 rounded-full bg-red-600" />
+                        </span>
+                        <span className="text-[11px] font-medium select-none">Ouvindo</span>
+                        <span className="flex h-3.5 items-center gap-[2.5px] px-0.5" role="img" aria-label="Microfone ativo gravando áudio">
+                          {[
+                            { h: [4, 15, 6, 17, 4], d: 0.65 },
+                            { h: [6, 19, 9, 13, 6], d: 0.5 },
+                            { h: [9, 23, 13, 19, 9], d: 0.75 },
+                            { h: [6, 17, 11, 21, 6], d: 0.55 },
+                            { h: [4, 13, 7, 15, 4], d: 0.6 },
+                          ].map((bar, i) => (
+                            <motion.span
+                              key={i}
+                              className="w-[2.5px] rounded-full bg-red-600"
+                              animate={{ height: bar.h, opacity: [0.65, 1, 0.75, 1, 0.65] }}
+                              transition={{ duration: bar.d, repeat: Infinity, delay: i * 0.08, ease: "easeInOut" }}
+                            />
+                          ))}
+                        </span>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  <div className="relative flex items-center justify-center">
+                    {voiceListening && (
+                      <>
+                        <motion.span
+                          className="absolute inset-0 rounded-full bg-red-500/25 pointer-events-none"
+                          initial={{ scale: 1, opacity: 0.8 }}
+                          animate={{ scale: [1, 1.7, 2.3], opacity: [0.8, 0.35, 0] }}
+                          transition={{ duration: 1.5, repeat: Infinity, ease: "easeOut" }}
+                        />
+                        <motion.span
+                          className="absolute inset-0 rounded-full bg-red-500/35 pointer-events-none"
+                          initial={{ scale: 1, opacity: 0.9 }}
+                          animate={{ scale: [1, 1.35, 1.75], opacity: [0.9, 0.45, 0] }}
+                          transition={{ duration: 1.5, repeat: Infinity, delay: 0.35, ease: "easeOut" }}
+                        />
+                      </>
+                    )}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      aria-label={voiceListening ? "Parar gravação" : "Perguntar por voz"}
+                      title={voiceListening ? "Parar gravação (ouvindo...)" : "Perguntar por voz"}
+                      className={`relative z-10 h-8 w-8 rounded-full p-0 transition-all ${
+                        voiceListening
+                          ? "bg-red-600 text-white hover:bg-red-700 shadow-md shadow-red-500/30"
+                          : "hover:bg-stone-100 text-stone-600"
+                      }`}
+                      onClick={startVoiceInput}
+                    >
+                      <motion.div
+                        animate={voiceListening ? { scale: [1, 1.14, 1] } : { scale: 1 }}
+                        transition={voiceListening ? { duration: 0.8, repeat: Infinity, ease: "easeInOut" } : undefined}
+                        className="flex items-center justify-center"
+                      >
+                        {voiceListening ? <MicOff size={15} /> : <Mic size={15} />}
+                      </motion.div>
+                    </Button>
+                  </div>
+
                   <Button
                     type="submit"
                     disabled={!prompt.trim()}
@@ -504,12 +680,13 @@ export function ChatPage() {
 
 function ChatMessage({ message, speechState, onEdit, onRead, onCopy, onDownload }: { message: Message; speechState: "idle" | "loading" | "playing"; onEdit: (message: Message) => void; onRead: (text: string) => void; onCopy: (text: string) => void; onDownload: (file: { name: string; text: string }) => void }) {
   const isEmployee = message.role === "employee";
+  const isThinking = !isEmployee && !message.content;
   return <motion.div initial={{ opacity: 0, y: 7 }} animate={{ opacity: 1, y: 0 }} className={`flex gap-2.5 ${isEmployee ? "justify-end" : "justify-start"}`}>
     {!isEmployee && <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-neutral-900 text-white"><Bot size={14}/></div>}
     <div className={`max-w-[88%] rounded-2xl px-4 py-3 ${isEmployee ? "rounded-br-md bg-neutral-900 text-white" : "rounded-bl-md border border-border bg-white"}`}>
-      <p className="whitespace-pre-line text-xs leading-5">{message.content}</p>
+      {isThinking ? <div className="flex h-5 items-center gap-1.5 px-1" role="status" aria-label="Consultando agente especialista via gRPC"><span className="sr-only">Consultando agente especialista via gRPC</span>{[0, 1, 2].map((dot) => <motion.span key={dot} className="h-1.5 w-1.5 rounded-full bg-stone-500" animate={{ y: [0, -4, 0], opacity: [0.45, 1, 0.45] }} transition={{ duration: 0.8, repeat: Infinity, delay: dot * 0.16, ease: "easeInOut" }} />)}</div> : <p className="whitespace-pre-line text-xs leading-5">{message.content}</p>}
       {message.file && <div className="mt-3 flex items-center gap-3 rounded-xl border border-border bg-stone-50 p-3"><div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white"><FileText size={15}/></div><div className="min-w-0 flex-1"><p className="truncate text-[11px] font-medium">{message.file.name}</p><p className="text-[10px] text-stone-500">Markdown · arquivo gerado</p></div><button type="button" onClick={() => onDownload(message.file!)} aria-label="Baixar arquivo gerado" className="rounded-md px-2 py-1 text-[10px] font-medium hover:bg-white">Baixar</button></div>}
-      <div className="mt-2 flex items-center justify-between gap-4"><p className={`text-[9px] ${isEmployee ? "text-white/60" : "text-stone-500"}`}>{message.time}</p>{isEmployee ? <button type="button" aria-label="Editar pergunta" title="Editar pergunta" onClick={() => onEdit(message)} className="rounded p-1 text-white/70 hover:bg-white/10 hover:text-white"><Pencil size={12}/></button> : <div className="flex items-center gap-1"><button type="button" aria-label={speechState === "idle" ? "Ouvir resposta" : "Parar leitura"} title={speechState === "loading" ? "Preparando áudio — clique para cancelar" : speechState === "playing" ? "Parar leitura" : "Ouvir resposta"} aria-pressed={speechState !== "idle"} onClick={() => onRead(message.content)} className="rounded p-1 text-stone-500 hover:bg-stone-100"><AudioLines size={13} className={speechState === "loading" ? "animate-pulse" : speechState === "playing" ? "text-neutral-900" : ""}/></button><button type="button" aria-label="Copiar resposta" title="Copiar resposta" onClick={() => onCopy(message.content)} className="rounded p-1 text-stone-500 hover:bg-stone-100"><Copy size={13}/></button></div>}</div>
+      <div className="mt-2 flex items-center justify-between gap-4"><p className={`text-[9px] ${isEmployee ? "text-white/60" : "text-stone-500"}`}>{message.time}</p>{isEmployee ? <button type="button" aria-label="Editar pergunta" title="Editar pergunta" onClick={() => onEdit(message)} className="rounded p-1 text-white/70 hover:bg-white/10 hover:text-white"><Pencil size={12}/></button> : <div className="flex items-center gap-1"><button type="button" aria-label={speechState === "idle" ? "Ouvir resposta" : "Parar leitura"} title={speechState === "loading" ? "Preparando áudio — clique para cancelar" : speechState === "playing" ? "Parar leitura" : "Ouvir resposta"} aria-pressed={speechState !== "idle"} onClick={() => onRead(message.content)} className="flex h-6 min-w-7 items-center justify-center gap-[2px] rounded px-1 text-stone-500 hover:bg-stone-100" ><AudioLines size={13} className={speechState === "loading" ? "animate-pulse" : speechState === "playing" ? "text-neutral-900" : ""}/>{speechState === "playing" && <span className="flex h-3 items-center gap-[2px]" role="img" aria-label="Áudio em reprodução">{[0, 1, 2, 3].map((bar) => <motion.span key={bar} className="w-[2px] rounded-full bg-neutral-800" animate={{ height: [3, 11, 5, 9, 3], opacity: [0.55, 1, 0.75, 1, 0.55] }} transition={{ duration: 0.75, repeat: Infinity, delay: bar * 0.12, ease: "easeInOut" }} />)}</span>}</button><button type="button" aria-label="Copiar resposta" title="Copiar resposta" onClick={() => onCopy(message.content)} className="rounded p-1 text-stone-500 hover:bg-stone-100"><Copy size={13}/></button></div>}</div>
     </div>
     {isEmployee && <Avatar initials="LF" className="mt-1 h-7 w-7 text-[9px]"/>}
   </motion.div>;

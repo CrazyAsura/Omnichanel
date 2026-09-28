@@ -8,13 +8,16 @@ server {
     server_name _;
     server_tokens off;
     client_max_body_size ${NGINX_CLIENT_MAX_BODY_SIZE};
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    set $api_upstream ${NGINX_API_UPSTREAM};
+    set $frontend_upstream ${NGINX_FRONTEND_UPSTREAM};
 
     location = /api {
         return 404;
     }
 
     location /api/ {
-        proxy_pass ${NGINX_API_UPSTREAM};
+        proxy_pass $api_upstream$request_uri;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -24,7 +27,7 @@ server {
     }
 
     location / {
-        proxy_pass ${NGINX_FRONTEND_UPSTREAM};
+        proxy_pass $frontend_upstream$request_uri;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
