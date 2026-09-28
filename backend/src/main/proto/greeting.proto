@@ -1,0 +1,9 @@
+syntax = "proto3";
+option java_multiple_files = true;
+option java_package = "com.omnichannel.backend.grpc";
+
+service GreetingService {
+  rpc Greet (GreetingRequest) returns (GreetingReply);
+}
+message GreetingRequest { string name = 1; }
+message GreetingReply { string message = 1; }

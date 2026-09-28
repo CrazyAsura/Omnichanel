@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package com.omnichannel.backend.grpc;
+
+option java_multiple_files = true;
+option java_package = "com.omnichannel.backend.grpc";
+option java_outer_classname = "AgentServiceProto";
+
+service AgentService {
+  rpc Chat (AgentChatRequest) returns (AgentChatResponse);
+  rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+message AgentChatRequest {
+  string session_id = 1;
+  string message = 2;
+  string agent_mode = 3;
+  repeated string selected_docs = 4;
+  repeated string enabled_sources = 5;
+  map<string, string> metadata = 6;
+}
+
+message GeneratedFile {
+  string name = 1;
+  string content = 2;
+  string mime_type = 3;
+}
+
+message AgentChatResponse {
+  string session_id = 1;
+  string reply = 2;
+  string agent_used = 3;
+  GeneratedFile generated_file = 4;
+  repeated string sources_consulted = 5;
+  int64 execution_time_ms = 6;
+  bool success = 7;
+  string error_message = 8;
+}
+
+message HealthCheckRequest {
+  string service = 1;
+}
+
+message HealthCheckResponse {
+  enum ServingStatus {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+  }
+  ServingStatus status = 1;
+  string message = 2;
+}

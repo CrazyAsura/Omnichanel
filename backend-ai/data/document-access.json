@@ -1,0 +1,8 @@
+{
+  "default_minimum_role": "SUPER_ADMIN",
+  "documents": {
+    "manual-processos-internos.md": "EMPLOYEE",
+    "contrato-integracao.md": "ADMIN",
+    "politica-de-seguranca.md": "ADMIN"
+  }
+}

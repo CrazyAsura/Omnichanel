@@ -1,0 +1,210 @@
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: omnichannel-sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      SQLCMDPASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+    ports: ["127.0.0.1:1433:1433"]
+    volumes: ["sqlserver_data:/var/opt/mssql"]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks:
+      - omnichannel-network
+
+  kafka:
+    image: apache/kafka:4.0.1
+    container_name: omnichannel-kafka
+    ports: ["127.0.0.1:9092:9092", "127.0.0.1:29092:29092"]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:9092,EXTERNAL://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+    volumes: ["kafka_data:/var/lib/kafka/data"]
+    networks:
+      - omnichannel-network
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.22
+    container_name: omnichannel-elasticsearch
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    ports: ["127.0.0.1:9200:9200"]
+    volumes: ["elasticsearch_data:/usr/share/elasticsearch/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - omnichannel-network
+
+  backend-ai:
+    build:
+      context: ../backend-ai
+      dockerfile: Dockerfile
+    image: backend-ai-backend-ai:latest
+    container_name: omnichannel-backend-ai
+    environment:
+      HTTP_PORT: 8000
+      GRPC_PORT: 50051
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:?Set OLLAMA_BASE_URL in backend/.env}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      AI_EVENTS_TOPIC: ai.events
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:?Set AI_SERVICE_TOKEN in .env}
+      CORS_ALLOWED_ORIGINS: ${FRONTEND_ORIGIN:?Set FRONTEND_ORIGIN in backend/.env}
+    expose: ["8000", "50051"]
+    depends_on:
+      kafka:
+        condition: service_started
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - omnichannel-network
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.19.22
+    container_name: omnichannel-kibana
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    ports: ["127.0.0.1:5601:5601"]
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - omnichannel-network
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: omnichannel-rabbitmq
+    ports: ["127.0.0.1:5672:5672", "127.0.0.1:15672:15672"]
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:?Set RABBITMQ_USERNAME in .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+    volumes: ["rabbitmq_data:/var/lib/rabbitmq"]
+    networks:
+      - omnichannel-network
+
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: omnichannel-chromadb
+    ports: ["127.0.0.1:8001:8000"]
+    volumes: ["chroma_data:/chroma/chroma"]
+    networks:
+      - omnichannel-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: omnichannel-redis
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}"]
+    ports: ["127.0.0.1:6379:6379"]
+    volumes: ["redis_data:/data"]
+    networks:
+      - omnichannel-network
+
+  app:
+    build: .
+    image: backend-app:latest
+    container_name: omnichannel-backend
+    environment:
+      DB_URL: jdbc:sqlserver://sqlserver:1433;databaseName=omnichannel;encrypt=true;trustServerCertificate=true
+      DB_USERNAME: ${APP_DB_USERNAME:?Set APP_DB_USERNAME in .env}
+      DB_PASSWORD: ${APP_DB_PASSWORD:?Set APP_DB_PASSWORD in .env}
+      DB_MIGRATION_USERNAME: ${DB_MIGRATION_USERNAME:?Set DB_MIGRATION_USERNAME in .env}
+      DB_MIGRATION_PASSWORD: ${DB_MIGRATION_PASSWORD:?Set DB_MIGRATION_PASSWORD in .env}
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:?Set AI_SERVICE_TOKEN in .env}
+      JWT_ISSUER_URI: ${JWT_ISSUER_URI:?Set JWT_ISSUER_URI in backend/.env}
+      JWT_JWK_SET_URI: ${JWT_JWK_SET_URI:?Set JWT_JWK_SET_URI in backend/.env}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:?Set JWT_AUDIENCE in backend/.env}
+      SECURITY_AUDIT_RETENTION_DAYS: ${SECURITY_AUDIT_RETENTION_DAYS:?Set SECURITY_AUDIT_RETENTION_DAYS in backend/.env}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      SPRING_ELASTICSEARCH_URIS: http://elasticsearch:9200
+      AI_GRPC_HOST: backend-ai
+      AI_HTTP_URL: http://backend-ai:8000
+      AI_GRPC_PORT: 50051
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:?Set FRONTEND_ORIGIN in backend/.env}
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:?Set RABBITMQ_USERNAME in .env}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+    expose: ["8080"]
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      rabbitmq:
+        condition: service_started
+      redis:
+        condition: service_started
+      elasticsearch:
+        condition: service_healthy
+      backend-ai:
+        condition: service_healthy
+    networks:
+      - omnichannel-network
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: omnichannel-prometheus
+    ports: ["127.0.0.1:9091:9090"]
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on: [app, backend-ai]
+    networks:
+      - omnichannel-network
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    container_name: omnichannel-grafana
+    ports: ["127.0.0.1:3001:3000"]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?Set GRAFANA_PASSWORD in .env}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./observability/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+    depends_on: [prometheus]
+    networks:
+      - omnichannel-network
+
+networks:
+  omnichannel-network:
+    name: ${DOCKER_NETWORK:?Set DOCKER_NETWORK in backend/.env}
+    external: true
+
+volumes:
+  sqlserver_data:
+  kafka_data:
+  elasticsearch_data:
+  grafana_data:
+  rabbitmq_data:
+  redis_data:
+  chroma_data:

@@ -1,0 +1,81 @@
+spring:
+  application:
+    name: omnichannel-backend
+  datasource:
+    url: ${DB_URL:jdbc:sqlserver://localhost:1433;databaseName=omnichannel;encrypt=true;trustServerCertificate=true}
+    username: ${DB_USERNAME:}
+    password: ${DB_PASSWORD:}
+    driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+  flyway:
+    enabled: true
+    user: ${DB_MIGRATION_USERNAME:}
+    password: ${DB_MIGRATION_PASSWORD:}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: omnichannel-backend
+      auto-offset-reset: earliest
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:}
+    password: ${RABBITMQ_PASSWORD:}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2000ms
+  elasticsearch:
+    uris: ${ELASTICSEARCH_URIS:http://localhost:9200}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${JWT_ISSUER_URI}
+          jwk-set-uri: ${JWT_JWK_SET_URI}
+app:
+  cors:
+    allowed-origin: ${FRONTEND_ORIGIN}
+  security:
+    audit-retention-days: ${SECURITY_AUDIT_RETENTION_DAYS:365}
+    jwt:
+      audience: ${JWT_AUDIENCE}
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    operationsSorter: method
+    tagsSorter: alpha
+  api-docs:
+    path: /v3/api-docs
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+grpc:
+  server:
+    port: ${GRPC_PORT:9090}
+ai:
+  http:
+    url: ${AI_HTTP_URL}
+  grpc:
+    host: ${AI_GRPC_HOST:localhost}
+    port: ${AI_GRPC_PORT:50051}
+    token: ${AI_SERVICE_TOKEN}
+server:
+  port: ${SERVER_PORT:8080}
