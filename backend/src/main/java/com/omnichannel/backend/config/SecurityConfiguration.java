@@ -42,12 +42,21 @@ public class SecurityConfiguration {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/auth/login").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/auth/users").hasAnyRole("EMPLOYEE", "ADMIN", "SUPER_ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/documents/upload", "/api/v1/documents/upload")
+                                .hasAnyRole("ADMIN", "SUPER_ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/documents/zip", "/api/v1/documents/zip",
+                                "/api/documents/unzip", "/api/v1/documents/unzip")
+                                .hasAnyRole("ADMIN", "SUPER_ADMIN")
+                        .requestMatchers(HttpMethod.GET, "/api/documents/*/content", "/api/v1/documents/*/content")
+                                .hasAnyRole("EMPLOYEE", "ADMIN", "SUPER_ADMIN")
                         .requestMatchers("/api/health", "/api/v1/health", "/api/chat/health", "/api/v1/chat/health",
                                 "/actuator/health", "/actuator/health/**",
                                 "/api/documents", "/api/documents/**", "/api/v1/documents", "/api/v1/documents/**").permitAll()
                         .requestMatchers("/api/v1/super-admin/**").hasRole("SUPER_ADMIN")
                         .requestMatchers("/api/v1/admin/**").hasAnyRole("ADMIN", "SUPER_ADMIN")
                         .requestMatchers("/api/reports/**", "/api/v1/reports/**").hasAnyRole("ADMIN", "SUPER_ADMIN")
+                        .requestMatchers("/api/logs/**", "/api/v1/logs/**").hasAnyRole("ADMIN", "SUPER_ADMIN")
                         .requestMatchers(HttpMethod.GET, "/api/v1/search", "/api/v1/search/**", "/api/search", "/api/search/**")
                                 .hasAnyRole("ADMIN", "SUPER_ADMIN")
                         .anyRequest().authenticated())

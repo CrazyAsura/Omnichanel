@@ -31,4 +31,24 @@ public class SecurityAuditService {
     public void purgeExpiredEvents() {
         repository.deleteExpired(Instant.now().minusSeconds(retentionDays * 86_400L));
     }
+
+    @Transactional(readOnly = true)
+    public java.util.List<SecurityAuditEvent> findRecentActivities(int limit) {
+        return repository.findTop100ByOrderByOccurredAtDesc();
+    }
+
+    @Transactional(readOnly = true)
+    public java.util.List<SecurityAuditEvent> findRecentErrors(int limit) {
+        return repository.findTop100ByOutcomeNotOrderByOccurredAtDesc("SUCCESS");
+    }
+
+    @Transactional(readOnly = true)
+    public long countTotalEvents() {
+        return repository.count();
+    }
+
+    @Transactional(readOnly = true)
+    public long countErrorEvents() {
+        return repository.countByOutcomeNot("SUCCESS");
+    }
 }

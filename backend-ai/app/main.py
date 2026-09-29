@@ -8,6 +8,7 @@ from typing import List, Optional, Dict, Any
 import grpc
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
@@ -56,9 +57,8 @@ tags_metadata = [
 async def lifespan(app: FastAPI):
     global grpc_server
     require_service_token_configuration(settings.SERVICE_AUTH_TOKEN)
-    logger.info("Iniciando AgentScope Orchestrator e ChromaDB...")
     await orchestrator.initialize()
-    await orchestrator.rag.index_documents()
+    asyncio.create_task(orchestrator.rag.index_documents())
     import threading
     threading.Thread(target=speech_warmup, daemon=True, name="TTS-Warmup").start()
 
@@ -83,7 +83,7 @@ app = FastAPI(
     version=settings.VERSION,
     description="""
 ### Omnichannel AI Intelligence Backend
-Backend de alta performance com **FastAPI**, **gRPC**, **AgentScope (Alibaba)**, **ChromaDB**, **RabbitMQ**, **Kafka**, **Redis** e **Gemma 4 (Ollama)**.
+Backend de alta performance com **FastAPI**, **gRPC**, **AgentScope (Alibaba)**, **ChromaDB**, **Kafka**, **Redis** e **Gemma 4 (Ollama)**.
 
 * **Swagger UI:** Disponível em `/docs`
 * **ReDoc:** Disponível em `/redoc`
@@ -104,6 +104,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 @app.middleware("http")
 async def require_internal_service_token(request: Request, call_next):
@@ -135,9 +136,9 @@ class RestChatRequest(BaseModel):
     enabled_sources: List[str] = Field(default_factory=list, max_length=20)
 
 class GeneratedFileSchema(BaseModel):
-    name: str = Field(..., examples=["relatorio-operacional.md"])
-    content: str = Field(..., examples=["# Relatório de Operações\n\nConteúdo..."])
-    mime_type: str = Field(default="text/markdown", examples=["text/markdown"])
+    name: str = Field(..., examples=["relatorio-operacional.pdf"])
+    content: str = Field(..., examples=["JVBERi0xLjQK..."])
+    mime_type: str = Field(default="application/pdf", examples=["application/pdf"])
 
 class RestChatResponse(BaseModel):
     session_id: str

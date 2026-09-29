@@ -145,7 +145,7 @@ public final class ProcessMessageUseCase implements ProcessMessageInputPort {
   },
   {
     id: "pdf-engine",
-    title: "Relatórios PDF (Java)",
+    title: "Relatórios PDF",
     category: "OUTPUT ADAPTER",
     icon: FileSpreadsheet,
     role: "Geração de PDFs executivos com JFreeChart & OpenPDF",

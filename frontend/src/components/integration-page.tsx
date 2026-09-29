@@ -1,9 +1,11 @@
-"use client";
+﻿"use client";
 
-import { useCallback, useEffect, useRef, useState, type DragEvent, type FormEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent, type FormEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Activity, Bot, Check, CircleHelp, Copy, Database, FileOutput, GitBranch, KeyRound, Link2, MoreHorizontal, MousePointer2, Play, Plus, Save, Search, Settings2, Sparkles, Trash2, Webhook, X, ZoomIn, ZoomOut } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { IntegrationFlowEditor } from "@/components/integration-flow-editor";
+import "@xyflow/react/dist/style.css";
 
 type Kind = "trigger" | "http" | "mcp" | "transform" | "agent" | "output";
 type Step = { id: string; kind: Kind; x: number; y: number; label: string; endpoint?: string; method?: string; credentialId?: string; operation?: string };
@@ -14,8 +16,6 @@ type Run = { id: string; workflowId: string; at: number; status: "Concluída" | 
 type Tab = "editor" | "connections" | "runs";
 
 const STORAGE = "omnichanel-integration-workspace-v1";
-const NODE_WIDTH = 232;
-const NODE_HEIGHT = 112;
 const CATALOG: { kind: Kind; title: string; caption: string; icon: typeof Webhook; tone: string }[] = [
   { kind: "trigger", title: "Início manual", caption: "Dispare o fluxo sob demanda", icon: Play, tone: "bg-orange-50 text-orange-600 border-orange-200" },
   { kind: "http", title: "Requisição HTTP", caption: "Consulte uma API externa", icon: Webhook, tone: "bg-blue-50 text-blue-600 border-blue-200" },
@@ -46,12 +46,18 @@ function nextStep(kind: Kind, x: number, y: number): Step {
 }
 
 function reaches(links: Link[], start: string, target: string): boolean {
+  const linksBySource = new Map<string, string[]>();
+  for (const link of links) {
+    const targets = linksBySource.get(link.source);
+    if (targets) targets.push(link.target);
+    else linksBySource.set(link.source, [link.target]);
+  }
   const visited = new Set<string>();
   const visit = (id: string): boolean => {
     if (id === target) return true;
     if (visited.has(id)) return false;
     visited.add(id);
-    return links.filter((link) => link.source === id).some((link) => visit(link.target));
+    return (linksBySource.get(id) ?? []).some(visit);
   };
   return visit(start);
 }
@@ -80,9 +86,9 @@ export function IntegrationPage() {
   const [connectionKey, setConnectionKey] = useState("");
   const [connectionFilter, setConnectionFilter] = useState("");
   const [catalogFilter, setCatalogFilter] = useState("");
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{ id: string; x: number; y: number; clientX: number; clientY: number } | null>(null);
+  const flowControlsRef = useRef<{ zoomIn: () => void; zoomOut: () => void; fitView: () => void; zoom: () => number } | null>(null);
   const flow = flows.find((item) => item.id === activeId) ?? flows[0];
+  const stepsById = new Map(flow.steps.map((step) => [step.id, step]));
   const selected = flow?.steps.find((step) => step.id === selectedId);
   const selectedLink = flow?.links.find((link) => link.id === selectedLinkId);
 
@@ -243,30 +249,9 @@ export function IntegrationPage() {
   const visibleConnections = connections.filter((item) => `${item.name} ${item.kind} ${item.endpoint}`.toLowerCase().includes(connectionFilter.toLowerCase()));
   const flowRuns = runs.filter((item) => item.workflowId === flow.id);
 
-  function onNodePointerDown(event: PointerEvent<HTMLDivElement>, step: Step) {
-    if ((event.target as HTMLElement).closest("button")) return;
-    dragRef.current = { id: step.id, x: step.x, y: step.y, clientX: event.clientX, clientY: event.clientY };
-    event.currentTarget.setPointerCapture(event.pointerId);
-    setSelectedId(step.id); setSelectedLinkId(null); setInspectorOpen(true);
-  }
-
-  function onNodePointerMove(event: PointerEvent<HTMLDivElement>) {
-    const drag = dragRef.current;
-    if (!drag) return;
-    updateStep(drag.id, { x: Math.max(20, Math.round(drag.x + (event.clientX - drag.clientX) / zoom)), y: Math.max(20, Math.round(drag.y + (event.clientY - drag.clientY) / zoom)) });
-  }
-
   function onPaletteDrag(event: DragEvent<HTMLButtonElement>, kind: Kind) {
     event.dataTransfer.setData("application/x-omnichannel-node", kind);
     event.dataTransfer.effectAllowed = "copy";
-  }
-
-  function onCanvasDrop(event: DragEvent<HTMLDivElement>) {
-    event.preventDefault();
-    const kind = event.dataTransfer.getData("application/x-omnichannel-node") as Kind;
-    if (!CATALOG.some((item) => item.kind === kind) || !viewportRef.current) return;
-    const rect = viewportRef.current.getBoundingClientRect();
-    addStep(kind, Math.max(20, Math.round((event.clientX - rect.left + viewportRef.current.scrollLeft) / zoom - NODE_WIDTH / 2)), Math.max(20, Math.round((event.clientY - rect.top + viewportRef.current.scrollTop) / zoom - NODE_HEIGHT / 2)));
   }
 
   return (
@@ -311,37 +296,21 @@ export function IntegrationPage() {
           <div className="relative flex min-w-0 flex-1 flex-col">
             <div className="z-10 flex h-12 shrink-0 items-center justify-between gap-2 border-b border-stone-200 bg-white/95 px-3 backdrop-blur sm:px-4">
               <div className="flex items-center gap-1.5"><button type="button" onClick={() => setCatalogOpen((value) => !value)} className="rounded-lg border border-stone-200 p-2 text-stone-600 hover:bg-stone-50" title="Alternar biblioteca" aria-label="Alternar biblioteca"><Plus size={16} /></button><span className="ml-2 hidden text-[11px] text-stone-500 sm:block">{flow.steps.length} etapas <span className="mx-1 text-stone-300">·</span> {flow.links.length} conexões</span>{connectFrom && <button type="button" onClick={() => setConnectFrom(null)} className="ml-2 rounded-lg bg-orange-50 px-2 py-1 text-[11px] text-orange-700">Selecione uma entrada · cancelar</button>}</div>
-              <div className="flex items-center gap-1"><button type="button" onClick={() => setZoom((value) => Math.max(0.55, +(value - 0.1).toFixed(2)))} title="Diminuir zoom" aria-label="Diminuir zoom" className="rounded-md p-1.5 hover:bg-stone-100"><ZoomOut size={16} /></button><span className="w-10 text-center text-[11px] tabular-nums text-stone-500">{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom((value) => Math.min(1.35, +(value + 0.1).toFixed(2)))} title="Aumentar zoom" aria-label="Aumentar zoom" className="rounded-md p-1.5 hover:bg-stone-100"><ZoomIn size={16} /></button><button type="button" onClick={() => { setZoom(0.9); viewportRef.current?.scrollTo({ left: 0, top: 0, behavior: "smooth" }); }} className="ml-1 rounded-md border border-stone-200 px-2 py-1.5 text-[11px] hover:bg-stone-50">Ajustar</button><button type="button" onClick={() => setInspectorOpen((value) => !value)} title="Alternar configurações" aria-label="Alternar configurações" className="ml-1 rounded-md p-1.5 hover:bg-stone-100"><Settings2 size={16} /></button></div>
+              <div className="flex items-center gap-1"><button type="button" onClick={() => flowControlsRef.current?.zoomOut()} title="Diminuir zoom" aria-label="Diminuir zoom" className="rounded-md p-1.5 hover:bg-stone-100"><ZoomOut size={16} /></button><span className="w-10 text-center text-[11px] tabular-nums text-stone-500">{Math.round(zoom * 100)}%</span><button type="button" onClick={() => flowControlsRef.current?.zoomIn()} title="Aumentar zoom" aria-label="Aumentar zoom" className="rounded-md p-1.5 hover:bg-stone-100"><ZoomIn size={16} /></button><button type="button" onClick={() => flowControlsRef.current?.fitView()} className="ml-1 rounded-md border border-stone-200 px-2 py-1.5 text-[11px] hover:bg-stone-50">Ajustar</button><button type="button" onClick={() => setInspectorOpen((value) => !value)} title="Alternar configurações" aria-label="Alternar configurações" className="ml-1 rounded-md p-1.5 hover:bg-stone-100"><Settings2 size={16} /></button></div>
             </div>
-            <div ref={viewportRef} onDragOver={(event) => event.preventDefault()} onDrop={onCanvasDrop} className="relative min-h-0 flex-1 overflow-auto bg-[#f7f8fa]" style={{ backgroundImage: "radial-gradient(#d8dce3 1px, transparent 1px)", backgroundSize: `${22 * zoom}px ${22 * zoom}px` }}>
-              <div style={{ width: 1600 * zoom, height: 960 * zoom, position: "relative" }}>
-                <div style={{ width: 1600, height: 960, transform: `scale(${zoom})`, transformOrigin: "top left", position: "absolute" }}>
-                  <svg aria-label="Conexões do fluxo" width="1600" height="960" className="pointer-events-none absolute inset-0 overflow-visible">
-                    {flow.links.map((link) => {
-                      const source = flow.steps.find((step) => step.id === link.source), target = flow.steps.find((step) => step.id === link.target);
-                      if (!source || !target) return null;
-                      const x1 = source.x + NODE_WIDTH, y1 = source.y + NODE_HEIGHT / 2, x2 = target.x, y2 = target.y + NODE_HEIGHT / 2;
-                      const curve = `M ${x1} ${y1} C ${x1 + Math.max(80, (x2 - x1) / 2)} ${y1}, ${x2 - Math.max(80, (x2 - x1) / 2)} ${y2}, ${x2} ${y2}`;
-                      return <g key={link.id} className="pointer-events-auto cursor-pointer" onClick={() => { setSelectedLinkId(link.id); setSelectedId(null); setInspectorOpen(true); }}><path d={curve} stroke="transparent" strokeWidth="18" fill="none" /><path d={curve} stroke={selectedLinkId === link.id ? "#ea580c" : "#a8b1bf"} strokeWidth={selectedLinkId === link.id ? 3 : 2} fill="none" /></g>;
-                    })}
-                  </svg>
-                  {flow.steps.map((step) => {
-                    const meta = CATALOG.find((item) => item.kind === step.kind)!;
-                    const Icon = meta.icon;
-                    const active = selectedId === step.id;
-                    return <div key={step.id} onPointerDown={(event) => onNodePointerDown(event, step)} onPointerMove={onNodePointerMove} onPointerUp={() => { dragRef.current = null; }} style={{ left: step.x, top: step.y, width: NODE_WIDTH, height: NODE_HEIGHT, touchAction: "none" }} className={cn("absolute cursor-grab select-none rounded-xl border bg-white shadow-[0_4px_18px_rgba(26,32,44,.07)] active:cursor-grabbing", active ? "border-orange-400 ring-[3px] ring-orange-100" : "border-stone-200 hover:border-stone-300", runningId === step.id && "ring-[3px] ring-blue-200", completedIds.includes(step.id) && "border-emerald-400")}> 
-                      {step.kind !== "trigger" && <button type="button" aria-label={`Conectar entrada de ${step.label}`} onClick={(event) => { event.stopPropagation(); if (connectFrom) addLink(connectFrom, step.id); else setNotice("Selecione primeiro a saída de outra etapa."); }} className={cn("absolute -left-[7px] top-[50px] z-10 h-3.5 w-3.5 rounded-full border-[3px] border-white bg-stone-400 ring-1 ring-stone-300 hover:bg-orange-500", connectFrom && "bg-orange-500 ring-orange-300")} />}
-                      <div className={cn("flex h-1.5 rounded-t-xl", meta.tone.split(" ")[0])} />
-                      <div className="flex items-center gap-3 px-3 pt-3"><div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border", meta.tone)}><Icon size={19} /></div><div className="min-w-0 flex-1"><p className="truncate text-[12px] font-semibold">{step.label}</p><p className="mt-0.5 truncate text-[10px] text-stone-500">{step.kind === "http" ? step.method ?? "GET" : step.kind === "agent" ? step.operation ?? "Agente interno" : meta.caption}</p></div><span className="h-2 w-2 shrink-0 rounded-full bg-stone-200" /></div>
-                      <div className="mt-3 border-t border-stone-100 px-3 py-2 text-[10px] text-stone-400">{step.kind === "http" || step.kind === "mcp" ? (step.credentialId ? "Conexão selecionada" : "Configure a conexão") : "Etapa de fluxo"}</div>
-                      {step.kind !== "output" && <button type="button" aria-label={`Conectar saída de ${step.label}`} onClick={(event) => { event.stopPropagation(); setConnectFrom(step.id); setNotice("Agora clique na entrada da próxima etapa."); }} className={cn("absolute -right-[7px] top-[50px] z-10 h-3.5 w-3.5 rounded-full border-[3px] border-white bg-stone-500 ring-1 ring-stone-300 hover:bg-orange-500", connectFrom === step.id && "bg-orange-500 ring-orange-300")} />}
-                    </div>;
-                  })}
-                </div>
-              </div>
-              {!flow.steps.length && <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-stone-400">Adicione uma etapa para começar o fluxo.</div>}
-            </div>
-            <div className="absolute bottom-4 left-4 flex max-w-[calc(100%-2rem)] items-center gap-2 rounded-lg border border-stone-200 bg-white/95 px-3 py-2 text-[11px] text-stone-500 shadow-sm"><MousePointer2 size={14} className="text-orange-500" />Arraste etapas para organizar; conecte pelos círculos laterais.</div>
+            <div className="relative min-h-0 flex-1" onDragOver={(event) => event.preventDefault()}>
+              <IntegrationFlowEditor
+                steps={flow.steps} links={flow.links} selectedId={selectedId} selectedLinkId={selectedLinkId}
+                runningId={runningId} completedIds={completedIds}
+                onSelectStep={(id) => { setSelectedId(id); setSelectedLinkId(null); setInspectorOpen(true); }}
+                onSelectLink={(id) => { setSelectedLinkId(id); setSelectedId(null); setInspectorOpen(true); }}
+                onConnect={addLink}
+                onStepsChange={(steps) => changeFlow((current) => ({ ...current, steps }))}
+                onDropStep={addStep} onCancelConnect={() => setConnectFrom(null)} onZoomChange={setZoom}
+                onViewportReady={(controls) => { flowControlsRef.current = controls; setZoom(controls.zoom()); }}
+              />
+              {!flow.steps.length && <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center text-sm text-stone-400">Adicione uma etapa para começar o fluxo.</div>}
+            </div>            <div className="absolute bottom-4 left-4 flex max-w-[calc(100%-2rem)] items-center gap-2 rounded-lg border border-stone-200 bg-white/95 px-3 py-2 text-[11px] text-stone-500 shadow-sm"><MousePointer2 size={14} className="text-orange-500" />Arraste etapas para organizar; conecte pelos círculos laterais.</div>
             <div className="flex gap-1 overflow-x-auto border-t border-stone-200 bg-white p-2 lg:hidden">{CATALOG.map(({ kind, title, icon: Icon }) => <button key={kind} type="button" onClick={() => addStep(kind)} className="flex shrink-0 items-center gap-1 rounded-lg border border-stone-200 px-2 py-1.5 text-[10px]"><Icon size={13} />{title}</button>)}</div>
           </div>
 

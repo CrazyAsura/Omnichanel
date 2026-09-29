@@ -1,4 +1,5 @@
 target/
+document-storage/
 !.mvn/wrapper/maven-wrapper.jar
 .env
 .env.*

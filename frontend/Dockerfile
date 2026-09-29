@@ -2,11 +2,12 @@
 FROM node:20-bookworm-slim AS base
 WORKDIR /app
 
-# 1. Instalação de dependências
+# 1. Instalação de dependências com cache eficiente
 FROM base AS dependencies
-COPY package.json ./
-ARG NPM_REGISTRY=https://registry.npmmirror.com/
-RUN npm config set registry ${NPM_REGISTRY} && npm install --no-audit
+COPY package.json package-lock.json* ./
+ARG NPM_REGISTRY=https://registry.npmjs.org/
+RUN npm config set registry ${NPM_REGISTRY} \
+    && (npm ci --prefer-offline --no-audit || npm install --no-audit)
 
 # 2. Compilação do Next.js
 FROM base AS builder

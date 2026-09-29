@@ -16,15 +16,35 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.security.core.Authentication;
 
+import com.omnichannel.backend.report.application.port.input.GetReportSummaryInputPort;
+import com.omnichannel.backend.report.domain.dto.ReportSummaryDto;
+import java.util.List;
+
 @RestController
 @RequestMapping({"/api/reports", "/api/v1/reports"})
 @Tag(name = "Reports & Analytics PDF", description = "Endpoints para geração de relatórios corporativos em PDF com gráficos de alta fidelidade")
 public class ReportController {
 
     private final GenerateExecutiveReportInputPort generateExecutiveReportInputPort;
+    private final GetReportSummaryInputPort getReportSummaryInputPort;
 
-    public ReportController(GenerateExecutiveReportInputPort generateExecutiveReportInputPort) {
+    public ReportController(
+            GenerateExecutiveReportInputPort generateExecutiveReportInputPort,
+            GetReportSummaryInputPort getReportSummaryInputPort) {
         this.generateExecutiveReportInputPort = generateExecutiveReportInputPort;
+        this.getReportSummaryInputPort = getReportSummaryInputPort;
+    }
+
+    @GetMapping
+    @Operation(summary = "Obter linhas de indicadores para painéis e dashboard")
+    public ResponseEntity<List<ReportSummaryDto.ReportRowDto>> getReportRows() {
+        return ResponseEntity.ok(getReportSummaryInputPort.execute().reportRows());
+    }
+
+    @GetMapping("/summary")
+    @Operation(summary = "Obter sumário completo de métricas e KPIs")
+    public ResponseEntity<ReportSummaryDto> getReportSummary() {
+        return ResponseEntity.ok(getReportSummaryInputPort.execute());
     }
 
     @GetMapping("/executive/pdf")

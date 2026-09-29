@@ -13,7 +13,7 @@
 
 ## Configuração antes de executar
 
-Copie `.env.example` para `.env` e configure senhas distintas e aleatórias para SQL Server, usuário runtime, usuário de migração, IA, RabbitMQ, Redis e Grafana. Crie logins separados no SQL Server: `APP_DB_USERNAME` deve ter apenas permissões DML necessárias; `DB_MIGRATION_USERNAME` recebe permissões DDL necessárias ao Flyway. A aplicação e as migrações nunca devem usar `sa`. Configure `JWT_ISSUER_URI`, `JWT_JWK_SET_URI` e `JWT_AUDIENCE` para o provedor de identidade da empresa e mapeie os papéis autorizados. Não use os placeholders do exemplo como segredos.
+Copie `.env.example` para `.env` e configure senhas distintas e aleatórias para SQL Server, usuário runtime, usuário de migração, IA, Redis e Grafana. Crie logins separados no SQL Server: `APP_DB_USERNAME` deve ter apenas permissões DML necessárias; `DB_MIGRATION_USERNAME` recebe permissões DDL necessárias ao Flyway. A aplicação e as migrações nunca devem usar `sa`. Configure `JWT_ISSUER_URI`, `JWT_JWK_SET_URI` e `JWT_AUDIENCE` para o provedor de identidade da empresa e mapeie os papéis autorizados. Não use os placeholders do exemplo como segredos.
 
 O login da interface ainda precisa ser conectado ao mesmo provedor OIDC para obter e enviar tokens de acesso; esconder páginas no frontend nunca substitui a autorização do backend. Para produção, use HTTPS na entrada e TLS/mTLS entre serviços, credenciais gerenciadas por secret manager, Kafka/Elasticsearch com autenticação e criptografia, backups criptografados e monitoramento de acesso aos logs. O canal gRPC do Compose é plaintext dentro da rede local Docker, protegido por token; isso não substitui TLS em ambiente produtivo.
 

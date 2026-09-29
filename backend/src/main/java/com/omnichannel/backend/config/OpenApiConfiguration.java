@@ -18,7 +18,7 @@ public class OpenApiConfiguration {
         return new OpenAPI()
                 .info(new Info()
                         .title("Omnichannel Platform API")
-                        .description("Backend corporativo Omnichannel integrado via gRPC ao AgentScope AI (FastAPI, Gemma 4, ChromaDB, RAG Multimodal, RabbitMQ, Kafka e Redis).")
+                        .description("Backend corporativo Omnichannel integrado via gRPC ao AgentScope AI (FastAPI, Gemma 4, ChromaDB, RAG Multimodal, Kafka e Redis).")
                         .version("1.0.0")
                         .license(new License()
                                 .name("Apache 2.0")

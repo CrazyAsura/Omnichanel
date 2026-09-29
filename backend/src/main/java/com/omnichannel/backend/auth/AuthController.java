@@ -20,6 +20,9 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -28,7 +31,7 @@ public class AuthController {
     private final JwtEncoder jwtEncoder;
     private final String issuer;
     private final String audience;
-    private final List<SeedUser> users;
+    private final Map<String, SeedUser> usersByEmail;
 
     public AuthController(
             JwtEncoder jwtEncoder,
@@ -38,7 +41,9 @@ public class AuthController {
         this.jwtEncoder = jwtEncoder;
         this.issuer = issuer;
         this.audience = audience;
-        this.users = List.of(seedUsers.split(";")).stream().map(SeedUser::parse).toList();
+        this.usersByEmail = List.of(seedUsers.split(";")).stream()
+                .map(SeedUser::parse)
+                .collect(Collectors.toUnmodifiableMap(SeedUser::email, Function.identity()));
     }
 
     public record LoginRequest(@NotBlank @Email String email, @NotBlank String password) {}
@@ -57,8 +62,8 @@ public class AuthController {
     @PostMapping("/login")
     public LoginResponse login(@Valid @RequestBody LoginRequest request) {
         String email = request.email().toLowerCase(Locale.ROOT);
-        SeedUser user = users.stream().filter(candidate -> candidate.email().equals(email)).findFirst()
-                .orElseThrow(AuthController::invalidCredentials);
+        SeedUser user = usersByEmail.get(email);
+        if (user == null) throw invalidCredentials();
         if (!PASSWORD_ENCODER.matches(request.password(), user.passwordHash())) throw invalidCredentials();
 
         Instant now = Instant.now();
@@ -74,6 +79,21 @@ public class AuthController {
 
     private static ResponseStatusException invalidCredentials() {
         return new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Email ou senha inválidos");
+    }
+
+    public record UserProfileDto(String name, String email, String role, String status, String lastSeen, String initials) {}
+
+    @org.springframework.web.bind.annotation.GetMapping("/users")
+    public List<UserProfileDto> getUsers() {
+        return usersByEmail.values().stream().map(u -> {
+            String role = u.roles().contains("SUPER_ADMIN") ? "Super-admin"
+                        : (u.roles().contains("ADMIN") ? "Admin" : "Funcionário");
+            String[] parts = u.name().split("\\s+");
+            String initials = parts.length > 1
+                ? ("" + parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase(Locale.ROOT)
+                : u.name().substring(0, Math.min(2, u.name().length())).toUpperCase(Locale.ROOT);
+            return new UserProfileDto(u.name(), u.email(), role, "Ativo", "Agora", initials);
+        }).toList();
     }
 
     public static String hashSeedPassword(String password) {

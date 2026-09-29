@@ -1,6 +1,11 @@
 spring:
   application:
     name: omnichannel-backend
+  servlet:
+    multipart:
+      max-file-size: 200MB
+      max-request-size: 210MB
+      file-size-threshold: 1MB
   datasource:
     url: ${DB_URL:jdbc:sqlserver://localhost:1433;databaseName=omnichannel;encrypt=true;trustServerCertificate=true}
     username: ${DB_USERNAME:}
@@ -25,11 +30,6 @@ spring:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
-  rabbitmq:
-    host: ${RABBITMQ_HOST:localhost}
-    port: ${RABBITMQ_PORT:5672}
-    username: ${RABBITMQ_USERNAME:}
-    password: ${RABBITMQ_PASSWORD:}
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -44,6 +44,8 @@ spring:
         jwt:
           issuer-uri: ${JWT_ISSUER_URI:omnichannel-local}
 app:
+  documents:
+    storage-dir: ${DOCUMENT_STORAGE_DIR:/app/data/documents}
   cors:
     allowed-origin: ${FRONTEND_ORIGIN}
   security:
@@ -80,3 +82,15 @@ ai:
     token: ${AI_SERVICE_TOKEN}
 server:
   port: ${SERVER_PORT:8080}
+  compression:
+    enabled: true
+    min-response-size: 1024
+    mime-types:
+      - text/html
+      - text/xml
+      - text/plain
+      - text/css
+      - text/javascript
+      - application/javascript
+      - application/json
+      - application/xml

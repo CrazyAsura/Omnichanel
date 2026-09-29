@@ -35,8 +35,6 @@ public class ChatConfiguration {
         headers.put(Metadata.Key.of("x-service-token", Metadata.ASCII_STRING_MARSHALLER), serviceToken);
         this.channel = ManagedChannelBuilder.forAddress(host, port)
                 .usePlaintext()
-                .keepAliveTime(30, TimeUnit.SECONDS)
-                .keepAliveTimeout(10, TimeUnit.SECONDS)
                 .build();
         return ClientInterceptors.intercept(this.channel, MetadataUtils.newAttachHeadersInterceptor(headers));
     }

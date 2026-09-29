@@ -1,5 +1,5 @@
 import axios from "axios";
-import { activity, errors, files, integrations, people, reportRows } from "@/lib/mock-data";
+import { activity, errors, files, integrations, people, reportRows, type Person } from "@/lib/mock-data";
 import { store } from "@/lib/store";
 
 export function getBackendBaseUrl(): string {
@@ -108,19 +108,144 @@ export async function searchAdmin(query: string): Promise<SearchResult[]> {
 
 const delay = (ms = 220) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export const mockApi = {
-  async dashboard() {
-    await delay();
-    return { users: "1.284", requests: "482.910", files: "8.492", errors: "142", activity, reportRows };
-  },
-  async users() { await delay(); return people; },
-  async files() { return fetchDocumentsApi(); },
-  async integrations() { await delay(); return integrations; },
-  async reports() { await delay(); return reportRows; },
-  async activity() { await delay(); return activity; },
-  async errors() { await delay(); return errors; },
+export type ActivityLogDto = {
+  initials: string;
+  user: string;
+  action: string;
+  target: string;
+  time: string;
+  tone: string;
+  ipAddress?: string;
+  outcome?: string;
 };
 
+export type ErrorLogDto = {
+  id: string;
+  title: string;
+  service: string;
+  severity: string;
+  time: string;
+  code: string;
+  details?: string;
+};
+
+export type ReportRowDto = {
+  label: string;
+  value: string;
+  change: string;
+  width: string;
+};
+
+export type ReportSummaryDto = {
+  users: string;
+  requests: string;
+  files: string;
+  errors: string;
+  reportRows: ReportRowDto[];
+};
+
+export async function fetchActivityLogsApi(): Promise<ActivityLogDto[]> {
+  try {
+    const response = await api.get<ActivityLogDto[]>("/logs/activity");
+    if (Array.isArray(response.data) && response.data.length > 0) {
+      return response.data;
+    }
+    return activity;
+  } catch {
+    return activity;
+  }
+}
+
+export async function fetchErrorLogsApi(): Promise<ErrorLogDto[]> {
+  try {
+    const response = await api.get<ErrorLogDto[]>("/logs/errors");
+    if (Array.isArray(response.data) && response.data.length > 0) {
+      return response.data;
+    }
+    return errors;
+  } catch {
+    return errors;
+  }
+}
+
+export async function fetchReportsApi(): Promise<ReportRowDto[]> {
+  try {
+    const response = await api.get<ReportRowDto[]>("/reports");
+    if (Array.isArray(response.data) && response.data.length > 0) {
+      return response.data;
+    }
+    return reportRows;
+  } catch {
+    return reportRows;
+  }
+}
+
+export async function fetchDashboardSummaryApi() {
+  try {
+    const [summaryRes, actRes] = await Promise.allSettled([
+      api.get<ReportSummaryDto>("/reports/summary"),
+      api.get<ActivityLogDto[]>("/logs/activity"),
+    ]);
+
+    const summary = summaryRes.status === "fulfilled" ? summaryRes.value.data : null;
+    const actList = actRes.status === "fulfilled" && Array.isArray(actRes.value.data) ? actRes.value.data : activity;
+
+    return {
+      users: summary?.users ?? "1.284",
+      requests: summary?.requests ?? "482.910",
+      files: summary?.files ?? "8.492",
+      errors: summary?.errors ?? "142",
+      activity: actList,
+      reportRows: summary?.reportRows ?? reportRows,
+    };
+  } catch {
+    return { users: "1.284", requests: "482.910", files: "8.492", errors: "142", activity, reportRows };
+  }
+}
+
+export async function fetchUsersApi(): Promise<Person[]> {
+  let userList = people;
+  try {
+    const response = await api.get<Person[]>("/auth/users");
+    if (Array.isArray(response.data) && response.data.length > 0) {
+      userList = response.data;
+    }
+  } catch {
+    // fallback local
+  }
+
+  const currentSession = store.getState().session;
+  if (currentSession?.email) {
+    const currentName = currentSession.name || currentSession.email.split("@")[0];
+    const roleFormatted = currentSession.role === "super-admin" ? "Super-admin" 
+                        : (currentSession.role === "admin" ? "Admin" : "Funcionário");
+    const existing = userList.find((p) => p.email.toLowerCase() === currentSession.email.toLowerCase());
+    if (existing) {
+      return [
+        { ...existing, name: currentName, role: roleFormatted, lastSeen: "Agora", status: "Ativo" },
+        ...userList.filter((p) => p.email.toLowerCase() !== currentSession.email.toLowerCase()),
+      ];
+    } else {
+      const initials = currentName.slice(0, 2).toUpperCase();
+      return [
+        { name: currentName, email: currentSession.email, role: roleFormatted, status: "Ativo", lastSeen: "Agora", initials },
+        ...userList,
+      ];
+    }
+  }
+
+  return userList;
+}
+
+export const mockApi = {
+  dashboard: fetchDashboardSummaryApi,
+  users: fetchUsersApi,
+  async files() { return fetchDocumentsApi(); },
+  async integrations() { await delay(); return integrations; },
+  reports: fetchReportsApi,
+  activity: fetchActivityLogsApi,
+  errors: fetchErrorLogsApi,
+};
 
 export type ManagedDocumentDto = {
   id?: string;
@@ -133,19 +258,57 @@ export type ManagedDocumentDto = {
 };
 
 export async function fetchDocumentsApi(): Promise<ManagedDocumentDto[]> {
+  const currentUserName = store.getState().session.name || store.getState().session.email || "Meu Usuário";
   try {
     const response = await api.get<ManagedDocumentDto[]>("/documents");
     if (response.data && Array.isArray(response.data) && response.data.length > 0) {
       return response.data;
     }
-    return files.map((f) => ({ ...f, accessLevel: "all" }));
+    return files.map((f) => ({ ...f, owner: currentUserName, accessLevel: "all" }));
   } catch {
-    return files.map((f) => ({ ...f, accessLevel: "all" }));
+    return files.map((f) => ({ ...f, owner: currentUserName, accessLevel: "all" }));
   }
 }
 
-export async function createDocumentApi(doc: { name: string; owner?: string; size?: string; type?: string }): Promise<ManagedDocumentDto> {
-  const response = await api.post<ManagedDocumentDto>("/documents", doc);
+export async function createDocumentApi(file: File): Promise<ManagedDocumentDto> {
+  if (file.size > 50 * 1024 * 1024) throw new Error("O arquivo excede o limite de 50 MB.");
+  const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+  if (!["pdf", "docx", "xlsx", "csv", "txt", "md"].includes(extension)) {
+    throw new Error("Formato não permitido. Envie PDF, DOCX, XLSX, CSV, TXT ou MD.");
+  }
+  const form = new FormData();
+  form.append("file", file);
+  const currentUserName = store.getState().session.name || store.getState().session.email || "Meu Usuário";
+  form.append("owner", currentUserName);
+  const response = await api.post<ManagedDocumentDto>(`/documents/upload?owner=${encodeURIComponent(currentUserName)}`, form, {
+    headers: { "Content-Type": "multipart/form-data" },
+    timeout: 120000,
+  });
+  return response.data;
+}
+
+export async function fetchDocumentContentApi(name: string): Promise<Blob> {
+  const response = await api.get<Blob>(`/documents/${encodeURIComponent(name)}/content`, { responseType: "blob" });
+  return response.data;
+}
+
+export async function zipDocumentsApi(names: string[]): Promise<Blob> {
+  const response = await api.post<Blob>("/documents/zip", { names }, {
+    responseType: "blob",
+    timeout: 330000,
+  });
+  return response.data;
+}
+
+export async function unzipDocumentsApi(file: File): Promise<ManagedDocumentDto[]> {
+  if (file.size > 200 * 1024 * 1024) throw new Error("O ZIP excede o limite de 200 MB.");
+  if (!file.name.toLowerCase().endsWith(".zip")) throw new Error("Selecione um arquivo .zip.");
+  const form = new FormData();
+  form.append("file", file);
+  const response = await api.post<ManagedDocumentDto[]>("/documents/unzip", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+    timeout: 330000,
+  });
   return response.data;
 }
 

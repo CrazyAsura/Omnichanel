@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -9,6 +9,7 @@ import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowDownToLine,
   ArrowLeft,
+  Archive,
   Check,
   ChevronRight,
   CloudUpload,
@@ -16,6 +17,7 @@ import {
   File,
   FileSpreadsheet,
   FileText,
+  FolderInput,
   LockKeyhole,
   MoreHorizontal,
   Save,
@@ -23,12 +25,14 @@ import {
   Trash2,
 } from "lucide-react";
 import { Button, Card, PageHeading, Pagination, SearchField, Skeleton } from "@/components/ui";
-import { mockApi, createDocumentApi, updateDocumentAccessApi, deleteDocumentApi } from "@/lib/api";
+import { mockApi, createDocumentApi, fetchDocumentContentApi, updateDocumentAccessApi, deleteDocumentApi, zipDocumentsApi, unzipDocumentsApi } from "@/lib/api";
 import { downloadCsv } from "@/lib/download";
 
 
 type AccessLevel = "all" | "admin" | "super-admin";
 type ManagedFile = { id?: string; name: string; owner: string; size: string; updated: string; type: string; accessLevel?: string };
+const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
+const ALLOWED_FILE_EXTENSIONS = new Set(["pdf", "docx", "xlsx", "csv", "txt", "md"]);
 
 function fileHref(fileName: string, base = "/super-admin/files") {
   return `${base}/${encodeURIComponent(fileName)}`;
@@ -91,6 +95,7 @@ export function FilesPage() {
   const queryClient = useQueryClient();
   const { data = [], isLoading } = useManagedFiles();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const zipInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [fileType, setFileType] = useState("Todos os tipos");
   const [menuTarget, setMenuTarget] = useState<{ file: ManagedFile; top: number; left: number } | null>(null);
@@ -98,6 +103,8 @@ export function FilesPage() {
   const [deleteTarget, setDeleteTarget] = useState<ManagedFile | null>(null);
   const [deleteReason, setDeleteReason] = useState("");
   const [mounted, setMounted] = useState(false);
+  const [selectedNames, setSelectedNames] = useState<string[]>([]);
+  const [archiveBusy, setArchiveBusy] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -175,21 +182,72 @@ export function FilesPage() {
 
   async function addFiles(selected: FileList | null) {
     if (!selected?.length) return;
+    const chosenFiles = Array.from(selected);
+    const invalidFile = chosenFiles.find((file) => {
+      const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+      return !ALLOWED_FILE_EXTENSIONS.has(extension) || file.size > MAX_FILE_SIZE_BYTES;
+    });
+    if (invalidFile) {
+      const extension = invalidFile.name.split(".").pop()?.toLowerCase() ?? "";
+      setNotice(!ALLOWED_FILE_EXTENSIONS.has(extension)
+        ? `Formato não permitido: ${invalidFile.name}. Envie PDF, DOCX, XLSX, CSV, TXT ou MD.`
+        : `O arquivo ${invalidFile.name} excede o limite de 50 MB.`);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
     try {
-      for (const file of Array.from(selected)) {
-        await createDocumentApi({
-          name: file.name,
-          owner: "Marina Costa",
-          size: formatFileSize(file.size),
-          type: extensionType(file.name),
-        });
-      }
+      for (const file of chosenFiles) await createDocumentApi(file);
       await queryClient.invalidateQueries({ queryKey: ["files"] });
-      setNotice(`${selected.length} arquivo(s) salvos no SQL Server.`);
+      setNotice(`${chosenFiles.length} arquivo(s) enviados e prontos para pré-visualização.`);
     } catch {
-      setNotice("Falha ao salvar arquivo(s) no SQL Server.");
+      setNotice("Falha ao enviar os arquivos. Confira o formato e o limite de 50 MB.");
     }
     if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  async function unzipFile(selected: FileList | null) {
+    const archive = selected?.[0];
+    if (!archive) return;
+    setArchiveBusy(true);
+    setNotice("Extraindo o ZIP no servidor…");
+    try {
+      const extracted = await unzipDocumentsApi(archive);
+      await queryClient.invalidateQueries({ queryKey: ["files"] });
+      setNotice(`${extracted.length} arquivo(s) extraído(s) e salvo(s) no servidor.`);
+    } catch {
+      setNotice("Não foi possível extrair o ZIP. Confira o limite de 200 MB, os formatos e se os nomes já existem.");
+    } finally {
+      setArchiveBusy(false);
+      if (zipInputRef.current) zipInputRef.current.value = "";
+    }
+  }
+
+  async function zipSelectedFiles() {
+    if (!selectedNames.length) return;
+    setArchiveBusy(true);
+    setNotice("Compactando os arquivos no servidor…");
+    try {
+      const blob = await zipDocumentsApi(selectedNames);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "documentos.zip";
+      document.body.appendChild(anchor);
+      anchor.click();
+      window.setTimeout(() => { URL.revokeObjectURL(url); anchor.remove(); }, 60_000);
+      setNotice("documentos.zip foi gerado sem alterar os arquivos originais.");
+    } catch {
+      setNotice("Não foi possível compactar a seleção. Alguns registros antigos podem não ter o arquivo original salvo.");
+    } finally {
+      setArchiveBusy(false);
+    }
+  }
+
+  function toggleCurrentPage(checked: boolean) {
+    const pageNames = paginatedFiles.map((file) => file.name);
+    setSelectedNames((current) => checked
+      ? Array.from(new Set([...current, ...pageNames]))
+      : current.filter((name) => !pageNames.includes(name)));
   }
 
   const metricCards = [
@@ -209,20 +267,27 @@ export function FilesPage() {
         title="Arquivos"
         description="Visualize e organize os arquivos do ambiente."
         action={
-          <>
+          <div className="flex flex-wrap gap-2">
             <input
               ref={fileInputRef}
               type="file"
               multiple
-              accept=".pdf,.doc,.docx,.csv,.txt,.xlsx"
+              accept=".pdf,.docx,.csv,.txt,.md,.xlsx"
               className="hidden"
               onChange={(event) => addFiles(event.target.files)}
             />
-            <Button onClick={() => fileInputRef.current?.click()}>
+            <input ref={zipInputRef} type="file" accept=".zip,application/zip" className="hidden" onChange={(event) => unzipFile(event.target.files)} />
+            <Button variant="outline" disabled={!selectedNames.length || archiveBusy} onClick={zipSelectedFiles}>
+              <Archive size={15} />Compactar {selectedNames.length ? `(${selectedNames.length})` : ""}
+            </Button>
+            <Button variant="outline" disabled={archiveBusy} onClick={() => zipInputRef.current?.click()}>
+              <FolderInput size={15} />Extrair ZIP
+            </Button>
+            <Button disabled={archiveBusy} onClick={() => fileInputRef.current?.click()}>
               <CloudUpload size={15} />
               Adicionar arquivos
             </Button>
-          </>
+          </div>
         }
       />
 
@@ -309,6 +374,9 @@ export function FilesPage() {
           <table className="w-full min-w-[680px] text-left">
             <thead>
               <tr className="border-b border-border bg-stone-50/70 text-[10px] uppercase tracking-wider text-muted-foreground">
+                <th className="w-10 px-3 py-3">
+                  <input type="checkbox" aria-label="Selecionar arquivos desta página" checked={paginatedFiles.length > 0 && paginatedFiles.every((file) => selectedNames.includes(file.name))} onChange={(event) => toggleCurrentPage(event.target.checked)} />
+                </th>
                 <th className="px-5 py-3 font-medium">Nome</th>
                 <th className="px-4 py-3 font-medium">Proprietário</th>
                 <th className="px-4 py-3 font-medium">Tamanho</th>
@@ -352,6 +420,9 @@ export function FilesPage() {
                     transition={{ type: "spring", stiffness: 400, damping: 30, delay: i * 0.02 }}
                     className="border-b border-border last:border-0 hover:bg-stone-50/60 transition-colors"
                   >
+                    <td className="w-10 px-3 py-3.5">
+                      <input type="checkbox" aria-label={`Selecionar ${file.name}`} checked={selectedNames.includes(file.name)} onChange={(event) => setSelectedNames((current) => event.target.checked ? [...current, file.name] : current.filter((name) => name !== file.name))} />
+                    </td>
                     <td className="px-5 py-3.5">
                       <Link href={fileHref(file.name, basePath)} className="flex items-center gap-3 group">
                         <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-muted text-muted-foreground group-hover:text-foreground transition-colors">
@@ -395,7 +466,7 @@ export function FilesPage() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={5} className="px-5 py-10 text-center text-xs text-muted-foreground">
+                  <td colSpan={6} className="px-5 py-10 text-center text-xs text-muted-foreground">
                     Nenhum arquivo encontrado.
                   </td>
                 </tr>
@@ -578,10 +649,38 @@ export function FileDetailsPage({ fileName }: { fileName: string }) {
   const { data = [], isLoading } = useManagedFiles();
   const file = findFileByName(data, fileName);
   const access = ((file as any)?.accessLevel as AccessLevel) || "all";
+  const [preview, setPreview] = useState<{ status: "loading" | "ready" | "missing" | "error"; kind?: "pdf" | "text" | "download"; url?: string; text?: string }>({ status: "loading" });
+
+  useEffect(() => {
+    if (!file?.name) return;
+    let cancelled = false;
+    let objectUrl: string | undefined;
+    setPreview({ status: "loading" });
+    fetchDocumentContentApi(file.name).then(async (blob) => {
+      if (cancelled) return;
+      const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+      if (extension === "pdf" || blob.type === "application/pdf") {
+        objectUrl = URL.createObjectURL(blob);
+        if (!cancelled) setPreview({ status: "ready", kind: "pdf", url: objectUrl });
+      } else if (["txt", "csv", "md", "markdown"].includes(extension) || blob.type.startsWith("text/")) {
+        const text = await blob.text();
+        if (!cancelled) setPreview({ status: "ready", kind: "text", text });
+      } else {
+        objectUrl = URL.createObjectURL(blob);
+        if (!cancelled) setPreview({ status: "ready", kind: "download", url: objectUrl });
+      }
+    }).catch((error: unknown) => {
+      if (!cancelled) {
+        const status = (error as { response?: { status?: number } })?.response?.status;
+        setPreview({ status: status === 404 ? "missing" : "error" });
+      }
+    });
+    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [file?.name]);
 
   if (isLoading) {
     return (
-      <div className="mx-auto max-w-4xl space-y-6">
+      <div className="h-full min-h-0 w-full overflow-y-auto px-4 py-6 sm:px-8">
         <Skeleton className="h-4 w-24" />
         <div className="flex justify-between items-center">
           <div className="space-y-2">
@@ -634,7 +733,7 @@ export function FileDetailsPage({ fileName }: { fileName: string }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ type: "spring", stiffness: 400, damping: 30, bounce: 0.15 }}
-      className="mx-auto max-w-4xl"
+      className="h-full min-h-0 w-full max-w-none overflow-y-auto px-4 py-6 sm:px-8"
     >
       <button
         type="button"
@@ -659,31 +758,20 @@ export function FileDetailsPage({ fileName }: { fileName: string }) {
           Gerenciar acesso
         </Button>
       </div>
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_260px]">
-        <Card className="min-h-[480px] overflow-hidden">
+      <div className="grid w-full gap-5 lg:grid-cols-[minmax(0,1fr)_260px]">
+        <Card className="min-h-[calc(100dvh-12rem)] overflow-hidden">
           <div className="flex items-center gap-2 border-b border-border bg-stone-50/70 px-5 py-3 text-xs font-medium">
             <FileText size={15} />
             Prévia do documento
           </div>
-          <article className="mx-auto max-w-2xl px-7 py-10 sm:px-12">
-            <p className="text-[10px] uppercase tracking-widest text-stone-400">Prévia demonstrativa</p>
-            <h2 className="mt-4 text-xl font-semibold">{file.name.replace(/\.[^.]+$/, "")}</h2>
-            <p className="mt-5 text-sm leading-7 text-stone-600">
-              Este espaço apresenta uma prévia do conteúdo do documento. A versão conectada exibirá o
-              texto extraído do arquivo e permitirá consultar suas referências.
-            </p>
-            <div className="mt-8 space-y-3">
-              <div className="h-2 w-full rounded bg-stone-100" />
-              <div className="h-2 w-[94%] rounded bg-stone-100" />
-              <div className="h-2 w-[88%] rounded bg-stone-100" />
-              <div className="h-2 w-[72%] rounded bg-stone-100" />
-            </div>
-            <h3 className="mt-8 text-sm font-semibold">Informações do arquivo</h3>
-            <p className="mt-2 text-sm leading-7 text-stone-600">
-              O arquivo foi adicionado por {file.owner}. Para visualizar o conteúdo original, conectar
-              armazenamento e habilitar a leitura do documento no ambiente.
-            </p>
-          </article>
+          <div className="p-5 sm:p-7">
+            {preview.status === "loading" && <div className="space-y-3 py-16"><p className="text-center text-xs text-stone-500">Carregando arquivo…</p><div className="mx-auto h-2 w-3/4 animate-pulse rounded bg-stone-100" /></div>}
+            {preview.status === "missing" && <div className="py-16 text-center"><FileText size={30} className="mx-auto text-stone-300" /><h2 className="mt-4 text-sm font-semibold">O conteúdo deste arquivo não foi enviado</h2><p className="mx-auto mt-2 max-w-sm text-xs leading-5 text-stone-500">Este registro guarda apenas os detalhes do documento. Envie o arquivo original novamente para abrir a prévia aqui.</p><Button variant="outline" className="mt-4" onClick={() => router.push(basePath)}>Voltar aos arquivos</Button></div>}
+            {preview.status === "error" && <p role="alert" className="py-16 text-center text-sm text-red-600">Não foi possível carregar este documento. Tente novamente.</p>}
+            {preview.status === "ready" && preview.kind === "pdf" && preview.url && <iframe title={`Prévia de ${file.name}`} src={preview.url} className="h-[min(75vh,900px)] min-h-[560px] w-full bg-stone-100" />}
+            {preview.status === "ready" && preview.kind === "text" && <pre className="max-h-[75vh] min-h-[480px] overflow-auto whitespace-pre-wrap break-words px-2 py-4 font-sans text-sm leading-7 text-stone-700">{preview.text}</pre>}
+            {preview.status === "ready" && preview.kind === "download" && preview.url && <div className="py-16 text-center"><FileText size={30} className="mx-auto text-stone-300" /><h2 className="mt-4 text-sm font-semibold">Arquivo pronto para abrir</h2><p className="mt-2 text-xs text-stone-500">A prévia embutida ainda não está disponível para este formato.</p><a href={preview.url} download={file.name} className="mt-4 inline-flex rounded-lg bg-stone-900 px-4 py-2 text-xs font-medium text-white">Baixar documento</a></div>}
+          </div>
         </Card>
         <Card className="h-fit p-5">
           <h2 className="text-sm font-semibold">Acesso</h2>

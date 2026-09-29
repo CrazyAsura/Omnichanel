@@ -1,5 +1,6 @@
 package com.omnichannel.backend.report.infrastructure.config;
 
+import com.omnichannel.backend.file.infrastructure.persistence.repository.SpringDataDocumentRepository;
 import com.omnichannel.backend.report.application.port.input.GenerateExecutiveReportInputPort;
 import com.omnichannel.backend.report.application.port.output.PdfReportGeneratorPort;
 import com.omnichannel.backend.report.application.port.output.ReportDataProviderPort;
@@ -7,6 +8,7 @@ import com.omnichannel.backend.report.application.usecase.GenerateExecutiveRepor
 import com.omnichannel.backend.report.infrastructure.pdf.adapter.OpenPdfReportGeneratorAdapter;
 import com.omnichannel.backend.report.infrastructure.pdf.chart.JFreeChartRenderer;
 import com.omnichannel.backend.report.infrastructure.persistence.adapter.ChatSessionReportDataProviderAdapter;
+import com.omnichannel.backend.security.SecurityAuditService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -24,8 +26,10 @@ public class ReportConfiguration {
     }
 
     @Bean
-    public ReportDataProviderPort reportDataProviderPort() {
-        return new ChatSessionReportDataProviderAdapter();
+    public ReportDataProviderPort reportDataProviderPort(
+            SecurityAuditService auditService,
+            SpringDataDocumentRepository documentRepository) {
+        return new ChatSessionReportDataProviderAdapter(auditService, documentRepository);
     }
 
     @Bean
@@ -33,5 +37,11 @@ public class ReportConfiguration {
             ReportDataProviderPort reportDataProviderPort,
             PdfReportGeneratorPort pdfReportGeneratorPort) {
         return new GenerateExecutiveReportUseCase(reportDataProviderPort, pdfReportGeneratorPort);
+    }
+
+    @Bean
+    public com.omnichannel.backend.report.application.port.input.GetReportSummaryInputPort getReportSummaryInputPort(
+            ReportDataProviderPort reportDataProviderPort) {
+        return new com.omnichannel.backend.report.application.usecase.GetReportSummaryUseCase(reportDataProviderPort);
     }
 }

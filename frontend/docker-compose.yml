@@ -23,11 +23,12 @@ services:
     restart: unless-stopped
     ports:
       - "${NGINX_BIND_ADDRESS:?Set NGINX_BIND_ADDRESS in frontend/.env}:${NGINX_PORT:?Set NGINX_PORT in frontend/.env}:80"
+      - "127.0.0.1:8088:80"
     environment:
       NGINX_API_UPSTREAM: ${NGINX_API_UPSTREAM:?Set NGINX_API_UPSTREAM in frontend/.env}
       NGINX_FRONTEND_UPSTREAM: ${NGINX_FRONTEND_UPSTREAM:?Set NGINX_FRONTEND_UPSTREAM in frontend/.env}
       NGINX_PROXY_READ_TIMEOUT: ${NGINX_PROXY_READ_TIMEOUT:?Set NGINX_PROXY_READ_TIMEOUT in frontend/.env}
-      NGINX_CLIENT_MAX_BODY_SIZE: ${NGINX_CLIENT_MAX_BODY_SIZE:?Set NGINX_CLIENT_MAX_BODY_SIZE in frontend/.env}
+      NGINX_CLIENT_MAX_BODY_SIZE: ${NGINX_CLIENT_MAX_BODY_SIZE:-50m}
       NGINX_ENVSUBST_FILTER: '^(NGINX_(API_UPSTREAM|FRONTEND_UPSTREAM|PROXY_READ_TIMEOUT|CLIENT_MAX_BODY_SIZE))$'
     volumes:
       - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro

@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { Avatar, Button, Card, Input, PageHeading, Pagination, SearchField, Skeleton, Status } from "@/components/ui";
 import { mockApi } from "@/lib/api";
-import { downloadCsv } from "@/lib/download";
+import { downloadCsv, downloadActivityLogsPdf, downloadErrorLogsPdf } from "@/lib/download";
 import type { Person } from "@/lib/mock-data";
 import { IntegrationPage as IntegrationPageComponent } from "@/components/integration-page";
 import { ReportsPage as ReportsPageComponent } from "@/components/reports-page";
@@ -882,23 +882,32 @@ export function ActivityPage() {
         title="Logs de atividades"
         description="Acompanhe as ações realizadas pelos usuários no sistema."
         action={
-          <Button
-            variant="outline"
-            onClick={() =>
-              downloadCsv(
-                "logs-de-atividades.csv",
-                filtered.map((item) => ({
-                  usuario: item.user,
-                  acao: item.action,
-                  recurso: item.target,
-                  horario: item.time,
-                }))
-              )
-            }
-          >
-            <ArrowDownToLine size={15} />
-            Exportar logs
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => downloadActivityLogsPdf("logs-de-atividades.pdf")}
+            >
+              <FileText size={15} />
+              Exportar PDF
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() =>
+                downloadCsv(
+                  "logs-de-atividades.csv",
+                  filtered.map((item) => ({
+                    usuario: item.user,
+                    acao: item.action,
+                    recurso: item.target,
+                    horario: item.time,
+                  }))
+                )
+              }
+            >
+              <ArrowDownToLine size={15} />
+              Exportar CSV
+            </Button>
+          </div>
         }
       />
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1022,10 +1031,19 @@ export function ErrorsPage() {
         title="Logs de erros"
         description="Investigue falhas e acompanhe a saúde dos serviços."
         action={
-          <Button variant="outline" onClick={() => refetch()}>
-            <RefreshCw size={14} />
-            Atualizar
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => downloadErrorLogsPdf("logs-de-erros.pdf")}
+            >
+              <FileText size={15} />
+              Exportar PDF
+            </Button>
+            <Button variant="outline" onClick={() => refetch()}>
+              <RefreshCw size={14} />
+              Atualizar
+            </Button>
+          </div>
         }
       />
       <div className="mb-5 grid gap-3 sm:grid-cols-3">

@@ -33,6 +33,24 @@ body {
 * { box-sizing: border-box; }
 ::selection { background: #d8d8d2; color: #171717; }
 
+.chat-markdown > :first-child { margin-top: 0; }
+.chat-markdown > :last-child { margin-bottom: 0; }
+.chat-markdown p { margin: 0.5rem 0; }
+.chat-markdown h1, .chat-markdown h2, .chat-markdown h3 { margin: 0.85rem 0 0.4rem; font-weight: 700; line-height: 1.35; }
+.chat-markdown h1 { font-size: 1rem; }
+.chat-markdown h2 { font-size: 0.9rem; }
+.chat-markdown h3 { font-size: 0.82rem; }
+.chat-markdown ul, .chat-markdown ol { margin: 0.5rem 0; padding-left: 1.25rem; }
+.chat-markdown ul { list-style: disc; }
+.chat-markdown ol { list-style: decimal; }
+.chat-markdown li { margin: 0.15rem 0; padding-left: 0.1rem; }
+.chat-markdown blockquote { margin: 0.6rem 0; border-left: 3px solid #d6d3d1; padding-left: 0.75rem; color: #57534e; }
+.chat-markdown a { color: #c2410c; text-decoration: underline; text-underline-offset: 2px; }
+.chat-markdown hr { margin: 0.75rem 0; border-color: #e7e5e4; }
+.chat-markdown :not(pre) > code { overflow-wrap: anywhere; }
+.chat-markdown pre code { background: transparent; padding: 0; color: inherit; }
+.chat-markdown input[type="checkbox"] { margin-right: 0.35rem; accent-color: #ea580c; }
+
 /* Invisible scrollbar utility (Gemini style) */
 .no-scrollbar::-webkit-scrollbar {
   display: none;

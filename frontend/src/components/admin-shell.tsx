@@ -93,6 +93,7 @@ export function AdminShell({
     pathname === "/super-admin/chat" ||
     pathname === "/funcionario/chat" ||
     pathname === "/funcionario" ||
+    /^\/(admin|super-admin)\/files\/[^/]+$/.test(pathname) ||
     pathname === "/super-admin/integrations" ||
     pathname === "/admin/integrations";
 

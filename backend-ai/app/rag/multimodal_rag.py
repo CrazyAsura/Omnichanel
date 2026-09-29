@@ -9,6 +9,12 @@ from app.config import settings
 from app.rag.chroma_store import ChromaVectorStore
 from app.access_control import can_read_document, normalize_role
 
+ALLOWED_DOCUMENT_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".csv", ".txt", ".md"}
+
+
+def is_allowed_corporate_document(file_path: Path) -> bool:
+    return file_path.suffix.casefold() in ALLOWED_DOCUMENT_EXTENSIONS
+
 class MultimodalDocumentRetriever:
     """
     RAG Multimodal utilizando os parsers nativos do AgentScope (PDFParser, ImageParser, TextParser)
@@ -40,7 +46,7 @@ class MultimodalDocumentRetriever:
         self.vector_store.clear_documents()
         docs_to_index = []
         for file_path in self.docs_dir.glob("*.*"):
-            if file_path.is_file():
+            if file_path.is_file() and is_allowed_corporate_document(file_path):
                 parsed_sections = await self.parse_file(file_path)
                 for item in parsed_sections:
                     if item["type"] == "text" and item["text"].strip():
@@ -52,7 +58,7 @@ class MultimodalDocumentRetriever:
 
     async def parse_file(self, file_path: Path) -> List[Dict[str, Any]]:
         """Analisa um arquivo individual usando o parser apropriado do AgentScope."""
-        if not file_path.exists():
+        if not file_path.exists() or not is_allowed_corporate_document(file_path):
             return []
         
         ext = file_path.suffix.lower()
@@ -64,8 +70,10 @@ class MultimodalDocumentRetriever:
                 sections = await self.pdf_parser.parse(str(file_path), filename)
             elif ext in [".png", ".jpg", ".jpeg", ".webp"]:
                 sections = await self.image_parser.parse(str(file_path), filename)
-            else:
+            elif ext in {".docx", ".xlsx", ".csv", ".txt", ".md"}:
                 sections = await self.text_parser.parse(str(file_path), filename)
+            else:
+                return []
 
             for section in sections:
                 if isinstance(section.content, TextBlock):
@@ -86,17 +94,8 @@ class MultimodalDocumentRetriever:
                         "metadata": section.metadata or {},
                         "access_role": self._minimum_role(filename)
                     })
-        except Exception as e:
-            try:
-                content = file_path.read_text(encoding="utf-8", errors="ignore")
-                results.append({
-                    "source": filename,
-                    "type": "text",
-                    "text": content,
-                    "metadata": {"fallback": True, "error": str(e)}
-                })
-            except Exception:
-                pass
+        except Exception:
+            return []
 
         return results
 
@@ -113,16 +112,22 @@ class MultimodalDocumentRetriever:
         retrieved_texts: List[str] = []
         retrieved_images: List[Dict[str, str]] = []
         sources_found: List[str] = []
+        available_files = {
+            path.name.casefold(): path
+            for path in self.docs_dir.glob("*.*")
+            if path.is_file() and is_allowed_corporate_document(path)
+        }
+        selected_sources = None
+        if selected_docs:
+            selected_sources = []
+            for requested_name in selected_docs:
+                safe_name = Path(requested_name.strip()).name.casefold()
+                matched = available_files.get(safe_name)
+                if matched and can_read_document(requester_role, self._minimum_role(matched.name)):
+                    selected_sources.append(matched.name)
 
         # 1. Busca Semântica no Banco Vetorial ChromaDB se houver query
         if query.strip():
-            selected_sources = []
-            if selected_docs:
-                for requested_name in selected_docs:
-                    safe_name = Path(requested_name).name.casefold()
-                    matched = next((p for p in self.docs_dir.glob("*") if p.is_file() and p.name.casefold() == safe_name), None)
-                    if matched and can_read_document(requester_role, self._minimum_role(matched.name)):
-                        selected_sources.append(matched.name)
             vector_results = [] if selected_docs and not selected_sources else self.vector_store.query(
                 query,
                 n_results=3,
@@ -135,7 +140,6 @@ class MultimodalDocumentRetriever:
                     sources_found.append(hit['source'])
 
         # 2. Documentos selecionados explicitamente com '@' no menu do frontend
-        available_files = {p.name.casefold(): p for p in self.docs_dir.glob("*.*") if p.is_file()}
         target_files: List[Path] = []
         if selected_docs:
             for doc_name in selected_docs:

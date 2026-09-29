@@ -52,7 +52,7 @@ export function ReportsPage() {
             }
           >
             <FileText size={15} />
-            Exportar PDF Executivo (Java)
+            Exportar PDF Executivo
           </Button>
         }
       />

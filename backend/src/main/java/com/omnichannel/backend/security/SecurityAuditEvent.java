@@ -43,5 +43,12 @@ public class SecurityAuditEvent {
         this.requestId = requestId;
     }
 
+    public UUID getId() { return id; }
     public Instant getOccurredAt() { return occurredAt; }
+    public String getActorId() { return actorId; }
+    public String getAction() { return action; }
+    public String getResource() { return resource; }
+    public String getOutcome() { return outcome; }
+    public UUID getRequestId() { return requestId; }
 }
+
